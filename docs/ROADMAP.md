@@ -1,156 +1,422 @@
 # Development Roadmap
 
-## Target: Daily-Driver River 0.4.5 Window Manager
+UWM is built incrementally.
 
-UWM is a full River 0.4.x window manager, not a layout manager plugin. The roadmap reflects the actual River 0.4 architecture: window manager protocol first, layout protocol as optimization.
+Every version must:
 
----
+* Compile successfully
+* Run under River 0.4.5
+* Be testable
+* Be usable as the foundation for the next phase
 
-## Phase 1: Foundation ✓
-- [x] Project scaffolding
-- [x] `build.zig` + `build.zig.zon` with wayland-client dependency
-- [x] `util/` data structures: Pool, RingBuf, Stack, Arena, IntrusiveList, BitSet
-- [x] Node type + NodePool
-- [x] Memory initialization (pools initialized in Server.init)
+No speculative implementations.
 
-## Phase 2: Core Tree ✓
-- [x] Workspace module (tiling root, floating root)
-- [x] Output module (geometry, tag mappings)
-- [x] Node tree operations: prepend, append, insertAfter, remove, reparent
-- [x] Tree invariant validation (validateTree)
-- [x] Focus history (FocusHistory ring buffer in Workspace)
+No future-phase code.
 
-## Phase 3: Layout Engine ✓
-- [x] Geometry engine (iterative stack walk via layoutTree)
-- [x] Split layout (horizontal/vertical)
-- [x] Tabbed layout
-- [x] Stacked layout
-- [x] Monocle state
-- [x] Dirty state system
-- [x] Ratio storage + resize module
-
-## Phase 4: State Machine ✓
-- [x] Container state transitions (setState, toggleState)
-- [x] Floating window management (floatWindow, tileWindow, toggleFloating)
-- [x] Fullscreen handling (setFullscreen, toggleFullscreen)
-- [x] Scratchpad workspace (Scratchpad ring buffer, scratchpadHide/show)
-- [x] State orthogonality validation (validateStateTransition)
-
-## Phase 5: Command System ✓
-- [x] Command enum + dispatch table
-- [x] Built-in command registration (focus, toggle, scratchpad, quit)
-- [x] Parser for user command strings
-- [x] `exec` handler (fork+execve for spawning programs)
-- [x] Command dispatch with context pointer
-
-## Phase 6: River 0.4 Window Management Protocol ← CURRENT
-- [x] `river_window_manager_v1` C bindings (all requests + events)
-- [x] `river_seat_v1` C bindings (keyboard focus, add_binding)
-- [x] `river_window_v1` C bindings (dimensions, close, set_position, ...)
-- [x] `river_output_v1` C bindings (position, tags)
-- [x] Registry binding for all required globals
-- [x] Window event handler (create river_window_v1 proxy, allocate node, BSP insertion)
-- [x] Manage sequence handler (set position via river_node_v1, propose dimensions, focus)
-- [x] Render sequence handler (set render position, borders, visibility)
-- [x] Keybinding registration (add_binding for each configured binding)
-- [x] Keybinding event handler (lookup + dispatch)
-- [x] Window close handler (cleanup river_node_v1, free node)
-- [x] Seat event handling
-- [x] `river_layout_manager_v3` as optional secondary (bulk geometry push)
-- [x] Layout demand handler (iterate leaves → push_layout → commit)
-
-## Phase 7: Workspaces + Tags ← NEXT
-- [ ] Output tag management
-- [ ] Workspace tag assignment
-- [ ] Window tag filtering
-- [ ] `workspace_next` / `workspace_prev` commands
-- [ ] `send_to_workspace` command
-- [ ] Tag-based visibility
-
-## Phase 8: Floating + Fullscreen
-- [ ] Floating window positioning (mouse-driven)
-- [ ] Fullscreen toggle via window management protocol
-- [ ] Interactive resize
-- [ ] Interactive move
-
-## Phase 9: IPC
-- [ ] Unix domain socket lifecycle
-- [ ] Binary frame protocol (encode/decode)
-- [ ] Command dispatch via IPC
-- [ ] Query support
-- [ ] Event broadcasting + subscriptions
-- [ ] Sway-compatible IPC subset for bar integration
-- [ ] `uwmctl` prototype
-
-## Phase 10: Configuration
-- [ ] Config file parser
-- [ ] Keybinding configuration
-- [ ] Window rule engine
-- [ ] Default config
-- [ ] Output configuration
-
-## Phase 11: Polish
-- [ ] Signal handling + graceful shutdown
-- [ ] Output hotplug handling
-- [ ] Error recovery
-- [ ] Edge case hardening
-
-## Phase 12: Testing & Benchmarks
-- [ ] Unit tests for every module
-- [ ] Integration integration with River protocol
-- [ ] Benchmarks: insertion, focus, geometry, switching, IPC
-- [ ] Performance regression tests
-
-## Phase 13: Ecosystem
-- [ ] Architecture doc finalization
-- [ ] IPC protocol spec
-- [ ] Configuration guide
-- [ ] `uwmctl` full implementation
-- [ ] Bar protocol integration
+No placeholders pretending to work.
 
 ---
 
-## Key Milestones
+# v0.1 — River Integration
 
-### Milestone 1: Window Tracking (Phase 6)
-- UWM binds protocols, receives window events, tracks windows in node pool
-- Window appears on screen with basic positioning
-- **Test**: Launch UWM + River, open foot → foot is visible and managed
+## Goal
 
-### Milestone 2: Basic Interaction (Phase 6)
-- Keybindings work: focus movement, spawn foot
-- **Test**: Super+Return spawns foot, focus moves with Super+h/j/k/l
+Prove that UWM can participate correctly in the River 0.4.5 protocol lifecycle.
 
-### Milestone 3: Daily Driver (Phases 6 + 7 + 8)
-- Window tracking, BSP insertion, splits, focus, workspaces, floating, fullscreen
-- Basic bar communication via IPC
-- **Test**: Full daily-driver workflow
+Success criteria:
 
-### Milestone 4: Polish (Phases 9 + 10 + 11)
-- Config file, IPC tools, edge case hardening
-- **Test**: Multi-monitor hotplug, session restart, error recovery
+```text
+UWM starts
+    ↓
+Connects to Wayland
+    ↓
+Discovers River globals
+    ↓
+Registers Super+Return
+    ↓
+Launches foot
+    ↓
+Tracks created windows
+```
+
+## Deliverables
+
+* Wayland connection
+* Registry discovery
+* Bind `river_window_manager_v1`
+* Bind `river_xkb_bindings_v1`
+* Window tracking
+* Output tracking
+* Seat tracking
+* Manage sequence handling
+* Render sequence handling
+* Application spawning
+* Super+Return → foot
+
+## Excluded
+
+* Layout engine
+* BSP
+* Workspaces
+* Floating
+* Fullscreen
+* Tabbed
+* Monocle
+* IPC
+* Configuration system
+
+## Test
+
+```text
+Start River
+    ↓
+Start UWM
+    ↓
+Press Super+Return
+    ↓
+foot launches
+    ↓
+Window appears
+```
+
+## Repository
+
+```text
+src/
+├── main.c
+├── registry.c
+├── wm.c
+├── window.c
+├── output.c
+├── seat.c
+├── binding.c
+
+include/
+├── registry.h
+├── wm.h
+├── window.h
+├── output.h
+├── seat.h
+├── binding.h
+
+protocol/
+```
 
 ---
 
-## Feature Priority (Daily-Driver Focus)
+# v0.2 — Basic Layout Engine
 
-| Priority | Feature | Required for DD | Phase |
-|----------|---------|-----------------|-------|
-| P0 | River protocol binding (window management) | Yes | 6 |
-| P0 | Window tracking + node allocation | Yes | 6 |
-| P0 | Keybinding registration + dispatch | Yes | 6 |
-| P0 | Focus movement | Yes | 6 |
-| P0 | BSP insertion | Yes | 6 |
-| P0 | Horizontal/vertical split | Yes | 6 |
-| P0 | Geometry apply | Yes | 6 |
-| P1 | Workspaces + tags | Yes | 7 |
-| P1 | Floating windows | Yes | 8 |
-| P1 | Fullscreen | Yes | 8 |
-| P2 | IPC + bar integration | Yes | 9 |
-| P2 | Tabbed containers | Nice | 6 |
-| P2 | Stacked containers | Nice | 6 |
-| P2 | Monocle state | Nice | 6 |
-| P3 | Config file | Later | 10 |
-| P3 | Scratchpad | Later | 6 |
-| P3 | Resize commands | Later | 6 |
-| P3 | Window rules | Later | 10 |
+## Goal
+
+Create the first real tiling behavior.
+
+Single output.
+
+Single workspace.
+
+All windows arranged horizontally.
+
+## Deliverables
+
+* Layout engine
+* Window positioning
+* Window sizing
+* Focus newest window
+* Close focused window
+
+## Test
+
+```text
+Open 3 terminals
+
++-------+-------+-------+
+|   1   |   2   |   3   |
++-------+-------+-------+
+```
+
+Close one window.
+
+Remaining windows expand automatically.
+
+---
+
+# v0.3 — Dynamic BSP
+
+## Goal
+
+Replace the simple layout with dynamic BSP insertion.
+
+## Deliverables
+
+* BSP tree
+* Horizontal split
+* Vertical split
+* Split ratio tracking
+* Focus movement
+* Window swapping
+
+## Keybinds
+
+```text
+Super+H
+Super+J
+Super+K
+Super+L
+
+Focus movement
+
+Super+O
+Horizontal split
+
+Super+E
+Vertical split
+```
+
+## Test
+
+```text
+Open multiple terminals
+
+Split horizontally
+Split vertically
+
+Navigate with hjkl
+```
+
+---
+
+# v0.4 — Workspaces
+
+## Goal
+
+Independent workspace state.
+
+## Deliverables
+
+* Workspace abstraction
+* Workspace switching
+* Per-workspace BSP trees
+* Window migration between workspaces
+
+## Keybinds
+
+```text
+Super+1..9
+Switch workspace
+
+Super+Shift+1..9
+Move window
+```
+
+## Test
+
+```text
+Workspace 1
+    Firefox
+
+Workspace 2
+    Foot
+
+Switch between them
+```
+
+---
+
+# v0.5 — Floating and Fullscreen
+
+## Goal
+
+Support non-tiled workflows.
+
+## Deliverables
+
+* Floating windows
+* Fullscreen windows
+* Interactive move
+* Interactive resize
+* Pointer operations
+
+## Keybinds
+
+```text
+Super+S
+Toggle floating
+
+Super+F
+Toggle fullscreen
+```
+
+## Test
+
+```text
+Toggle floating
+Move window
+
+Toggle fullscreen
+Restore window
+```
+
+---
+
+# v0.6 — Tabbed Containers
+
+## Goal
+
+Introduce tabbed containers.
+
+## Deliverables
+
+* Tabbed container type
+* Tab switching
+* Convert split → tabbed
+* Convert tabbed → split
+
+## Keybinds
+
+```text
+Super+M
+Toggle tabbed
+
+Super+Tab
+Next tab
+```
+
+## Test
+
+```text
+3 windows
+
+[Firefox]
+[Foot]
+[Nvim]
+
+Switch tabs
+```
+
+---
+
+# v0.7 — Monocle State
+
+## Goal
+
+Monocle is a container state, not a workspace layout.
+
+## Deliverables
+
+* Monocle state
+* Focus cycling
+* Hide non-focused windows
+* Preserve underlying tree
+
+## Requirements
+
+Monocle must preserve:
+
+* Split ratios
+* Focus history
+* Child ordering
+* Tab state
+
+Disabling monocle restores the original structure instantly.
+
+## Keybinds
+
+```text
+Super+Shift+M
+Toggle monocle
+```
+
+## Test
+
+```text
+Several windows
+
+Enable monocle
+
+Only focused window visible
+
+Disable monocle
+
+Original layout restored
+```
+
+---
+
+# v0.8 — IPC and Control Interface
+
+## Goal
+
+Expose UWM functionality externally.
+
+## Deliverables
+
+* Unix domain socket
+* Command dispatch
+* Query system
+* Event subscriptions
+
+## Tools
+
+```text
+uwmctl
+```
+
+## Examples
+
+```text
+uwmctl focus-left
+uwmctl toggle-monocle
+uwmctl query focused-window
+```
+
+---
+
+# v0.9 — UWM Bar
+
+## Goal
+
+Build a dedicated status bar for UWM.
+
+## Deliverables
+
+* Workspace display
+* Focused window title
+* System information
+* IPC subscriptions
+* Event-driven updates
+
+## Requirements
+
+* No polling where possible
+* Low memory usage
+* Fast startup
+* Separate process from UWM
+
+---
+
+# v1.0 — Daily Driver
+
+## Goal
+
+Replace existing window managers for daily use.
+
+Requirements:
+
+* Stable
+* Reliable
+* Responsive
+* Documented
+
+Features:
+
+* BSP
+* Floating
+* Fullscreen
+* Tabbed
+* Monocle
+* Workspaces
+* IPC
+* uwmctl
+* uwm-bar
+
+UWM v1.0 is considered complete when it can be used as a primary desktop environment under River without requiring another window manager.
