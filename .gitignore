@@ -1,0 +1,108 @@
+# Build Artifacts
+
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+*.out
+
+# Dependency Files
+
+*.d
+*.dep
+
+# Debug Symbols
+
+*.debug
+*.pdb
+
+# Profiling
+
+gmon.out
+perf.data
+perf.data.old
+
+# Coverage
+
+*.gcda
+*.gcno
+*.gcov
+coverage/
+lcov.info
+
+# Build Directories
+
+build/
+builddir/
+cmake-build-*/
+meson-private/
+meson-logs/
+meson-info/
+
+# CMake
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Meson
+
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Generated Protocol Files
+
+protocol/generated/
+generated/
+
+# Zig (if old files remain)
+
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Editor
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+
+.DS_Store
+Thumbs.db
+
+# Logs
+
+*.log
+
+# Temporary Files
+
+tmp/
+temp/
+
+# Testing
+
+test-results/
+benchmark-results/
+
+# Core Dumps
+
+core
+core.*
+vgcore.*
+
+# Local Config
+
+.env
+.env.local
+

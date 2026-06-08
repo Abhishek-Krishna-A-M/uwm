@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: © 2026 Isaac Freund
+# SPDX-License-Identifier: 0BSD
+
+submitter:
+  git.sr.ht:
+    enabled: false
+
+image: alpine/edge
+packages:
+  - cargo
+  - go
+  - libxkbcommon-dev
+  - lua5.4-dev
+  - luarocks5.4
+  - meson
+  - ninja
+  - pkgconf
+  - reuse
+  - wayland-dev
+sources:
+  - https://codeberg.org/river/tinyrwm
+tasks:
+  - reuse: |
+      cd tinyrwm
+      reuse lint
+  - c: |
+      cd tinyrwm/c
+      meson setup build
+      ninja -C build
+  - go: |
+      cd tinyrwm/go
+      go generate ./internal/proto
+      if ! git diff --quiet ./internal/proto; then
+        echo "Generated protocol code is stale; regenerate it with `go generate ./internal/proto`"
+        exit 1
+      fi
+      go build -o tinyrwm
+  - rust: |
+      cd tinyrwm/rust
+      cargo build
+  - lua: |
+      cd tinyrwm/lua
+      eval $(luarocks-5.4 path --bin)
+      luarocks-5.4 --local make
