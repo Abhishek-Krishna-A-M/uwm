@@ -4,28 +4,32 @@
 #include "river-window-management-v1-protocol.h"
 #include "river-xkb-bindings-v1-protocol.h"
 
-// Static local tracking registers for v0.1 boundaries
 static struct river_window_manager_v1 *window_manager = NULL;
 static struct river_xkb_bindings_v1 *xkb_bindings = NULL;
+
+struct river_window_manager_v1 *registry_get_window_manager(void) {
+    return window_manager;
+}
+
+struct river_xkb_bindings_v1 *registry_get_xkb_bindings(void) {
+    return xkb_bindings;
+}
 
 static void registry_handle_global(void *data, struct wl_registry *registry,
                                    uint32_t id, const char *interface, uint32_t version) {
     (void)data;
 
     if (strcmp(interface, "river_window_manager_v1") == 0) {
-        printf("[uwm] Discovered global interface: %s (v%d)\n", interface, version);
+        printf("[uwm] Global: %s (v%d)\n", interface, version);
         window_manager = wl_registry_bind(registry, id, &river_window_manager_v1_interface, 4);
     } else if (strcmp(interface, "river_xkb_bindings_v1") == 0) {
-        printf("[uwm] Discovered global interface: %s (v%d)\n", interface, version);
+        printf("[uwm] Global: %s (v%d)\n", interface, version);
         xkb_bindings = wl_registry_bind(registry, id, &river_xkb_bindings_v1_interface, 1);
     }
 }
 
 static void registry_handle_global_remove(void *data, struct wl_registry *registry, uint32_t id) {
-    (void)data;
-    (void)registry;
-    (void)id;
-    // Log removal states if tracking objects get torn down mid-session
+    (void)data; (void)registry; (void)id;
 }
 
 static const struct wl_registry_listener registry_listener = {
