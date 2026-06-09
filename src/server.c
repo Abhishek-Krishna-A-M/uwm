@@ -131,6 +131,8 @@ bool server_init(struct uwm_server *server) {
 	server->request_set_selection.notify = seat_request_set_selection;
 	wl_signal_add(&server->seat->events.request_set_selection, &server->request_set_selection);
 
+	workspace_manager_init(&server->workspaces);
+
 	return true;
 }
 

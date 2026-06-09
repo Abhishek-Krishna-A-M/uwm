@@ -11,6 +11,7 @@
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include "workspace.h"
 
 /* Forward declaration to break circular dependency */
 struct uwm_toplevel;
@@ -57,6 +58,8 @@ struct uwm_server {
 	struct wlr_output_layout *output_layout;
 	struct wl_list outputs;
 	struct wl_listener new_output;
+
+	struct uwm_workspace_manager workspaces;
 };
 
 bool server_init(struct uwm_server *server);
