@@ -13,19 +13,19 @@ PHASE 1 — Workspace Foundation
 
 PHASE 2 — BSP Core
 ------------------
-[ ] BSP node structure
-[ ] BSP insertion
-[ ] BSP split H
-[ ] BSP split V
-[ ] BSP layout calculation
-[ ] BSP tree destruction
-[ ] Focus traversal
-[ ] Window swap
-[ ] Window reorder
-[ ] Resize BSP splits
-[ ] Focus follows pointer
-[ ] Focus follows pointer toggle
-[ ] Warp pointer to focused window (optional)
+[x] BSP node structure
+[x] BSP insertion
+[x] BSP split H
+[x] BSP split V
+[x] BSP layout calculation
+[x] BSP tree destruction
+[x] Focus traversal
+[x] Window swap
+[x] Window reorder
+[x] Resize BSP splits
+[x] Focus follows pointer
+[x] Focus follows pointer toggle
+[x] Warp pointer to focused window (optional)
 
 PHASE 3 — Window States
 -----------------------

@@ -140,6 +140,8 @@ void server_finish(struct uwm_server *server) {
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
 
+	workspace_manager_finish(&server->workspaces);
+
 	wl_list_remove(&server->new_xdg_toplevel.link);
 	wl_list_remove(&server->new_xdg_popup.link);
 

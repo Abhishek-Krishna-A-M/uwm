@@ -13,6 +13,7 @@ LIBS!=$(PKG_CONFIG) --libs $(PKGS)
 SRC = $(wildcard src/*.c)
 OBJ = $(patsubst src/%.c,output/%.o,$(SRC))
 
+
 all: uwm
 
 # Pattern rule for all object files

@@ -4,6 +4,8 @@
 #include <wlr/types/wlr_data_device.h>
 #include "input.h"
 #include "window.h"
+#include "bsp.h"
+#include "server.h"
 
 void reset_cursor_mode(struct uwm_server *server) {
 	/* Reset the cursor mode to passthrough. */
@@ -54,6 +56,28 @@ static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) 
 	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &keyboard->wlr_keyboard->modifiers);
 }
 
+static void bsp_arrange_current_workspace(struct uwm_server *server)
+{
+	struct uwm_workspace *ws = &server->workspaces.workspaces[server->workspaces.current];
+	struct wlr_output_layout *layout = server->output_layout;
+	struct wlr_output_layout_output *lo;
+	int w = 0, h = 0;
+	wl_list_for_each(lo, &layout->outputs, link) {
+		struct wlr_output *output = lo->output;
+		if (output->enabled) {
+			w = output->width;
+			h = output->height;
+			break;
+		}
+	}
+	bsp_arrange(ws, w, h);
+}
+
+static struct uwm_workspace *current_ws(struct uwm_server *server)
+{
+	return &server->workspaces.workspaces[server->workspaces.current];
+}
+
 static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint32_t modifiers) {
 	/* Here we handle compositor keybindings. This is when the compositor is
 	 * processing keys, rather than passing them on to the client for its own
@@ -64,27 +88,92 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 	case XKB_KEY_Escape:
 		wl_display_terminate(server->wl_display);
 		break;
-	case XKB_KEY_F1:
-		/* Cycle to the next toplevel */
-		if (wl_list_length(&server->toplevels) < 2) {
-			break;
+	case XKB_KEY_Tab:
+		if (server->workspaces.last != server->workspaces.current)
+			workspace_switch(server, server->workspaces.last);
+		break;
+	case XKB_KEY_h: {
+		if (modifiers & WLR_MODIFIER_SHIFT) {
+			bsp_swap_direction(current_ws(server),
+				current_ws(server)->focused, 0);
+			bsp_arrange_current_workspace(server);
+		} else if (modifiers & WLR_MODIFIER_ALT) {
+			struct uwm_workspace *ws = current_ws(server);
+			bsp_resize(ws, ws->focused, -0.05f);
+			bsp_arrange_current_workspace(server);
+		} else {
+			struct uwm_toplevel *target = bsp_focus_left(current_ws(server));
+			if (target) focus_toplevel(target);
 		}
-		struct uwm_toplevel *next_toplevel = wl_container_of(server->toplevels.prev, next_toplevel, link);
-		focus_toplevel(next_toplevel);
+		break;
+	}
+	case XKB_KEY_j: {
+		if (modifiers & WLR_MODIFIER_SHIFT) {
+			bsp_swap_direction(current_ws(server),
+				current_ws(server)->focused, 3);
+			bsp_arrange_current_workspace(server);
+		} else if (modifiers & WLR_MODIFIER_ALT) {
+			struct uwm_workspace *ws = current_ws(server);
+			bsp_resize(ws, ws->focused, -0.05f);
+			bsp_arrange_current_workspace(server);
+		} else {
+			struct uwm_toplevel *target = bsp_focus_down(current_ws(server));
+			if (target) focus_toplevel(target);
+		}
+		break;
+	}
+	case XKB_KEY_k: {
+		if (modifiers & WLR_MODIFIER_SHIFT) {
+			bsp_swap_direction(current_ws(server),
+				current_ws(server)->focused, 2);
+			bsp_arrange_current_workspace(server);
+		} else if (modifiers & WLR_MODIFIER_ALT) {
+			struct uwm_workspace *ws = current_ws(server);
+			bsp_resize(ws, ws->focused, 0.05f);
+			bsp_arrange_current_workspace(server);
+		} else {
+			struct uwm_toplevel *target = bsp_focus_up(current_ws(server));
+			if (target) focus_toplevel(target);
+		}
+		break;
+	}
+	case XKB_KEY_l: {
+		if (modifiers & WLR_MODIFIER_SHIFT) {
+			bsp_swap_direction(current_ws(server),
+				current_ws(server)->focused, 1);
+			bsp_arrange_current_workspace(server);
+		} else if (modifiers & WLR_MODIFIER_ALT) {
+			struct uwm_workspace *ws = current_ws(server);
+			bsp_resize(ws, ws->focused, 0.05f);
+			bsp_arrange_current_workspace(server);
+		} else {
+			struct uwm_toplevel *target = bsp_focus_right(current_ws(server));
+			if (target) focus_toplevel(target);
+		}
+		break;
+	}
+	case XKB_KEY_r:
+		bsp_rotate_focused_split(current_ws(server));
+		bsp_arrange_current_workspace(server);
+		break;
+	case XKB_KEY_c:
+		workspace_focus_previous(server);
 		break;
 	default: {
 		uint32_t ws = 0;
+		bool is_num = false;
 		if (sym >= XKB_KEY_1 && sym <= XKB_KEY_9) {
 			ws = sym - XKB_KEY_1;
+			is_num = true;
 		} else if (sym >= XKB_KEY_exclam && sym <= XKB_KEY_parenleft) {
 			ws = sym - XKB_KEY_exclam;
+			is_num = true;
 		}
-		if (ws < UWM_WORKSPACE_COUNT) {
-			if (modifiers & WLR_MODIFIER_CTRL) {
-				struct uwm_toplevel *focused = server->workspaces.workspaces[server->workspaces.current].focused;
-				if (focused) {
+		if (is_num) {
+			if (modifiers & WLR_MODIFIER_SHIFT) {
+				struct uwm_toplevel *focused = current_ws(server)->focused;
+				if (focused)
 					workspace_move_toplevel(focused, ws);
-				}
 			} else {
 				workspace_switch(server, ws);
 			}
@@ -327,6 +416,12 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 		 * aware of the coordinates passed. */
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
+
+		struct uwm_workspace *ws = toplevel->workspace;
+		if (ws == &server->workspaces.workspaces[server->workspaces.current]
+				&& ws->focus_follows_pointer) {
+			focus_toplevel(toplevel);
+		}
 	} else {
 		/* Clear pointer focus so future button events and such are not sent to
 		 * the last client to have the cursor over it. */

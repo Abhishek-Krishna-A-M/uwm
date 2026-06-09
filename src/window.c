@@ -1,7 +1,10 @@
 #include <assert.h>
 #include <stdlib.h>
+#include <wlr/types/wlr_output_layout.h>
 #include "window.h"
 #include "input.h"
+#include "bsp.h"
+#include "server.h"
 
 void focus_toplevel(struct uwm_toplevel *toplevel) {
 	/* Note: this function only deals with keyboard focus. */
@@ -25,6 +28,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			wlr_xdg_toplevel_set_activated(prev_toplevel, false);
 		}
 	}
+
+	struct uwm_workspace *ws = toplevel->workspace;
+	ws->last_focused = ws->focused;
+	ws->focused = toplevel;
+
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	/* Move the toplevel to the front */
 	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
@@ -39,7 +47,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
-	toplevel->workspace->focused = toplevel;
 }
 
 struct uwm_toplevel *desktop_toplevel_at(
@@ -68,6 +75,30 @@ struct uwm_toplevel *desktop_toplevel_at(
 	return tree->node.data;
 }
 
+static int get_workspace_width(struct uwm_server *server)
+{
+	struct wlr_output_layout *layout = server->output_layout;
+	struct wlr_output_layout_output *lo;
+	wl_list_for_each(lo, &layout->outputs, link) {
+		struct wlr_output *output = lo->output;
+		if (output->enabled)
+			return output->width;
+	}
+	return 0;
+}
+
+static int get_workspace_height(struct uwm_server *server)
+{
+	struct wlr_output_layout *layout = server->output_layout;
+	struct wlr_output_layout_output *lo;
+	wl_list_for_each(lo, &layout->outputs, link) {
+		struct wlr_output *output = lo->output;
+		if (output->enabled)
+			return output->height;
+	}
+	return 0;
+}
+
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, map);
@@ -76,6 +107,13 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	wl_list_insert(&toplevel->workspace->toplevels, &toplevel->workspace_link);
 
 	struct uwm_workspace *current = &toplevel->server->workspaces.workspaces[toplevel->server->workspaces.current];
+
+	bsp_insert(toplevel->workspace, toplevel);
+
+	int w = get_workspace_width(toplevel->server);
+	int h = get_workspace_height(toplevel->server);
+	bsp_arrange(toplevel->workspace, w, h);
+
 	if (toplevel->workspace != current) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
@@ -96,8 +134,17 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->workspace_link);
 	wl_list_init(&toplevel->workspace_link);
 
-	if (toplevel->workspace->focused == toplevel) {
-		struct uwm_workspace *ws = toplevel->workspace;
+	bsp_remove(toplevel->workspace, toplevel);
+
+	int w = get_workspace_width(toplevel->server);
+	int h = get_workspace_height(toplevel->server);
+	bsp_arrange(toplevel->workspace, w, h);
+
+	struct uwm_workspace *ws = toplevel->workspace;
+	if (ws->last_focused == toplevel)
+		ws->last_focused = NULL;
+
+	if (ws->focused == toplevel) {
 		if (!wl_list_empty(&ws->toplevels)) {
 			struct uwm_toplevel *next = wl_container_of(ws->toplevels.next, next, workspace_link);
 			ws->focused = next;
@@ -132,6 +179,12 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+
+	struct uwm_workspace *ws = toplevel->workspace;
+	if (ws->last_focused == toplevel)
+		ws->last_focused = NULL;
+	if (ws->focused == toplevel)
+		ws->focused = NULL;
 
 	free(toplevel);
 }
