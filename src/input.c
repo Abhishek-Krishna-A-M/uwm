@@ -54,12 +54,12 @@ static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) 
 	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &keyboard->wlr_keyboard->modifiers);
 }
 
-static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym) {
+static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint32_t modifiers) {
 	/* Here we handle compositor keybindings. This is when the compositor is
 	 * processing keys, rather than passing them on to the client for its own
 	 * processing.
 	 *
-	 * This function assumes Alt is held down. */
+	 * This function assumes Super is held down. */
 	switch (sym) {
 	case XKB_KEY_Escape:
 		wl_display_terminate(server->wl_display);
@@ -72,8 +72,26 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym) {
 		struct uwm_toplevel *next_toplevel = wl_container_of(server->toplevels.prev, next_toplevel, link);
 		focus_toplevel(next_toplevel);
 		break;
-	default:
+	default: {
+		uint32_t ws = 0;
+		if (sym >= XKB_KEY_1 && sym <= XKB_KEY_9) {
+			ws = sym - XKB_KEY_1;
+		} else if (sym >= XKB_KEY_exclam && sym <= XKB_KEY_parenleft) {
+			ws = sym - XKB_KEY_exclam;
+		}
+		if (ws < UWM_WORKSPACE_COUNT) {
+			if (modifiers & WLR_MODIFIER_CTRL) {
+				struct uwm_toplevel *focused = server->workspaces.workspaces[server->workspaces.current].focused;
+				if (focused) {
+					workspace_move_toplevel(focused, ws);
+				}
+			} else {
+				workspace_switch(server, ws);
+			}
+			return true;
+		}
 		return false;
+	}
 	}
 	return true;
 }
@@ -93,11 +111,11 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
 	bool handled = false;
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
-	if ((modifiers & WLR_MODIFIER_ALT) && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+	if ((modifiers & WLR_MODIFIER_LOGO) && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		/* If alt is held down and this button was _pressed_, we attempt to
 		 * process it as a compositor keybinding. */
 		for (int i = 0; i < nsyms; i++) {
-			handled = handle_keybinding(server, syms[i]);
+			handled = handle_keybinding(server, syms[i], modifiers);
 		}
 	}
 

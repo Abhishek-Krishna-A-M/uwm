@@ -9,6 +9,8 @@
 struct uwm_toplevel {
 	struct wl_list link;
 	struct uwm_server *server;
+	struct uwm_workspace *workspace;
+	struct wl_list workspace_link;
 	struct wlr_xdg_toplevel *xdg_toplevel;
 	struct wlr_scene_tree *scene_tree;
 	struct wl_listener map;

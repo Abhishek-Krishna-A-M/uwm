@@ -39,6 +39,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
+	toplevel->workspace->focused = toplevel;
 }
 
 struct uwm_toplevel *desktop_toplevel_at(
@@ -72,6 +73,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+	wl_list_insert(&toplevel->workspace->toplevels, &toplevel->workspace_link);
+
+	struct uwm_workspace *current = &toplevel->server->workspaces.workspaces[toplevel->server->workspaces.current];
+	if (toplevel->workspace != current) {
+		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
+	}
 
 	focus_toplevel(toplevel);
 }
@@ -86,6 +93,18 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	}
 
 	wl_list_remove(&toplevel->link);
+	wl_list_remove(&toplevel->workspace_link);
+	wl_list_init(&toplevel->workspace_link);
+
+	if (toplevel->workspace->focused == toplevel) {
+		struct uwm_workspace *ws = toplevel->workspace;
+		if (!wl_list_empty(&ws->toplevels)) {
+			struct uwm_toplevel *next = wl_container_of(ws->toplevels.next, next, workspace_link);
+			ws->focused = next;
+		} else {
+			ws->focused = NULL;
+		}
+	}
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -169,6 +188,8 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = calloc(1, sizeof(*toplevel));
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
+	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
+	wl_list_init(&toplevel->workspace_link);
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
