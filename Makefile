@@ -2,17 +2,30 @@ PKG_CONFIG?=pkg-config
 
 PKGS="wlroots-0.20" wayland-server xkbcommon
 CFLAGS_PKG_CONFIG!=$(PKG_CONFIG) --cflags $(PKGS)
+
+# Append dynamic pkg-config flags and your static project flags
 CFLAGS+=$(CFLAGS_PKG_CONFIG)
+CFLAGS+=-g -Werror -I. -DWLR_USE_UNSTABLE
+
 LIBS!=$(PKG_CONFIG) --libs $(PKGS)
+
+# Dynamically find all .c files in src/ and map them to .o files in output/
+SRC = $(wildcard src/*.c)
+OBJ = $(patsubst src/%.c,output/%.o,$(SRC))
 
 all: uwm
 
-output/main.o: src/main.c
-	$(CC) -c $< -g -Werror $(CFLAGS) -I. -DWLR_USE_UNSTABLE -o $@
-uwm: output/main.o
-	$(CC) $^ -g -Werror $(CFLAGS) $(LDFLAGS) $(LIBS) -o $@
+# Pattern rule for all object files
+output/%.o: src/%.c
+	mkdir -p output
+	$(CC) -c $< $(CFLAGS) -o $@
 
+# Link the final executable
+uwm: $(OBJ)
+	$(CC) $(OBJ) $(CFLAGS) $(LDFLAGS) $(LIBS) -o $@
+
+# Clean the executable and the entire output directory
 clean:
-	rm -f uwm output/main.o
+	rm -rf uwm output/
 
 .PHONY: all clean
