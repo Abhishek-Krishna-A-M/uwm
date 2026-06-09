@@ -41,6 +41,7 @@ PHASE 3 — Window States
 [ ] Toggle monocle
 [ ] Toggle tabbed
 [ ] Restore previous state
+[ ] Floating layer ordering
 
 PHASE 4 — Rules System
 ----------------------
@@ -63,6 +64,7 @@ PHASE 5 — Multi Output
 [ ] HDMI mirror
 [ ] Output hotplug handling
 [ ] Output layout configuration
+[ ] Primary output selection
 
 PHASE 6 — Visual Layer
 ----------------------
@@ -81,6 +83,7 @@ PHASE 7 — Configuration
 [ ] Output configuration
 [ ] Startup commands
 [ ] Reload configuration
+[ ] Config validation
 
 PHASE 8 — IPC
 -------------
@@ -88,6 +91,7 @@ PHASE 8 — IPC
 [ ] IPC command parser
 [ ] Event subscription
 [ ] Runtime state queries
+[ ] IPC events
 
 PHASE 9 — uwmctl
 ----------------
@@ -136,10 +140,10 @@ PHASE 13 — XWayland
 PHASE 14 — Optimization
 -----------------------
 [ ] Damage tracking audit
-[ ] Scene graph audit
-[ ] Allocation audit
-[ ] Input latency audit
 [ ] Render path audit
+[ ] Input latency audit
 [ ] Wakeup reduction
+[ ] Allocation audit
+[ ] Scene graph audit
 [ ] Memory profiling
 [ ] Startup profiling
