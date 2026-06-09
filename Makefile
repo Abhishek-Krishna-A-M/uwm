@@ -5,7 +5,7 @@ CFLAGS_PKG_CONFIG!=$(PKG_CONFIG) --cflags $(PKGS)
 
 # Append dynamic pkg-config flags and your static project flags
 CFLAGS+=$(CFLAGS_PKG_CONFIG)
-CFLAGS+=-g -Werror -I. -DWLR_USE_UNSTABLE
+CFLAGS+=-g -Werror -I. -Iinclude -DWLR_USE_UNSTABLE
 
 LIBS!=$(PKG_CONFIG) --libs $(PKGS)
 
