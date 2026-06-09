@@ -1,6 +1,0 @@
-# SPDX-FileCopyrightText: © 2026 Julian Andrews
-# SPDX-License-Identifier: 0BSD
-
-/target
-Cargo.lock
-**/*.rs.bk
