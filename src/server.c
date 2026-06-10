@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <signal.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -9,6 +10,9 @@
 #include "window.h"
 
 bool server_init(struct uwm_server *server) {
+	signal(SIGCHLD, SIG_IGN);
+	config_load(&server->config);
+
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, managing Wayland globals, and so on. */
 	server->wl_display = wl_display_create();
@@ -17,10 +21,17 @@ bool server_init(struct uwm_server *server) {
 	 * output hardware. The autocreate option will choose the most suitable
 	 * backend based on the current environment, such as opening an X11 window
 	 * if an X11 server is running. */
-	server->backend = wlr_backend_autocreate(wl_display_get_event_loop(server->wl_display), NULL);
+	server->backend = wlr_backend_autocreate(wl_display_get_event_loop(server->wl_display), &server->session);
 	if (server->backend == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_backend");
+		wlr_log(WLR_ERROR, "If running on a TTY, ensure a session manager is available:");
+		wlr_log(WLR_ERROR, "  - seatd (recommended): https://git.sr.ht/~kennylevinsen/seatd");
+		wlr_log(WLR_ERROR, "  - elogind: https://github.com/elogind/elogind");
 		return false;
+	}
+	if (server->session == NULL) {
+		wlr_log(WLR_ERROR, "No session backend available. VT switching will not work.");
+		wlr_log(WLR_ERROR, "Install seatd or elogind for session management.");
 	}
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -72,6 +83,8 @@ bool server_init(struct uwm_server *server) {
 	 * necessary.
 	 */
 	server->scene = wlr_scene_create();
+	server->tiled_layer = wlr_scene_tree_create(&server->scene->tree);
+	server->floating_layer = wlr_scene_tree_create(&server->scene->tree);
 	server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
 
 	/* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
@@ -132,6 +145,10 @@ bool server_init(struct uwm_server *server) {
 	wl_signal_add(&server->seat->events.request_set_selection, &server->request_set_selection);
 
 	workspace_manager_init(&server->workspaces);
+
+	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++)
+		server->workspaces.workspaces[i].focus_follows_pointer
+			= server->config.focus_follows_pointer;
 
 	return true;
 }

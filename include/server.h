@@ -11,6 +11,8 @@
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/backend/session.h>
+#include "config.h"
 #include "workspace.h"
 
 /* Forward declaration to break circular dependency */
@@ -28,6 +30,8 @@ struct uwm_server {
 	struct wlr_renderer *renderer;
 	struct wlr_allocator *allocator;
 	struct wlr_scene *scene;
+	struct wlr_scene_tree *tiled_layer;
+	struct wlr_scene_tree *floating_layer;
 	struct wlr_scene_output_layout *scene_layout;
 
 	struct wlr_xdg_shell *xdg_shell;
@@ -60,6 +64,9 @@ struct uwm_server {
 	struct wl_listener new_output;
 
 	struct uwm_workspace_manager workspaces;
+	struct wlr_session *session;
+	struct uwm_config config;
+	uint32_t last_button_serial;
 };
 
 bool server_init(struct uwm_server *server);

@@ -4,10 +4,11 @@
 #include "window.h"
 #include "input.h"
 #include "bsp.h"
+#include "floating.h"
+#include "layout.h"
 #include "server.h"
 
 void focus_toplevel(struct uwm_toplevel *toplevel) {
-	/* Note: this function only deals with keyboard focus. */
 	if (toplevel == NULL) {
 		return;
 	}
@@ -16,13 +17,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
 	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
 	if (prev_surface == surface) {
-		/* Don't re-focus an already focused surface. */
 		return;
 	}
 	if (prev_surface) {
-		/* Deactivate the previously focused surface. This lets the client know
-		 * it no longer has focus and the client will repaint accordingly, e.g.
-		 * stop displaying a caret. */
 		struct wlr_xdg_toplevel *prev_toplevel = wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
 		if (prev_toplevel != NULL) {
 			wlr_xdg_toplevel_set_activated(prev_toplevel, false);
@@ -33,16 +30,36 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	ws->last_focused = ws->focused;
 	ws->focused = toplevel;
 
-	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-	/* Move the toplevel to the front */
-	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+	/* Update tabbed/monocle container active_child */
+	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
+		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
+		if (leaf) {
+			struct uwm_bsp_node *cont = bsp_find_tabbed_parent(leaf);
+			if (cont && cont->active_child != leaf) {
+				cont->active_child = leaf;
+				update_layout_visibility(cont);
+				update_tab_bar(cont);
+			}
+		}
+	}
+
+	/* Update display for workspace-level monocle */
+	if (ws->monocle) {
+		int out_w, out_h;
+		get_output_size(server, &out_w, &out_h);
+		bsp_arrange(ws, out_w, out_h);
+	}
+
+	if (toplevel->floating) {
+		raise_floating(toplevel);
+	} else {
+		wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+	}
+
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
-	/* Activate the new surface */
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
-	/* Tell the seat to have the keyboard enter this surface. wlroots will keep
-	 * track of this and automatically send key events to the appropriate
-	 * clients without additional work on your part. */
+	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
@@ -72,31 +89,9 @@ struct uwm_toplevel *desktop_toplevel_at(
 	while (tree != NULL && tree->node.data == NULL) {
 		tree = tree->node.parent;
 	}
+	if (!tree)
+		return NULL;
 	return tree->node.data;
-}
-
-static int get_workspace_width(struct uwm_server *server)
-{
-	struct wlr_output_layout *layout = server->output_layout;
-	struct wlr_output_layout_output *lo;
-	wl_list_for_each(lo, &layout->outputs, link) {
-		struct wlr_output *output = lo->output;
-		if (output->enabled)
-			return output->width;
-	}
-	return 0;
-}
-
-static int get_workspace_height(struct uwm_server *server)
-{
-	struct wlr_output_layout *layout = server->output_layout;
-	struct wlr_output_layout_output *lo;
-	wl_list_for_each(lo, &layout->outputs, link) {
-		struct wlr_output *output = lo->output;
-		if (output->enabled)
-			return output->height;
-	}
-	return 0;
 }
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
@@ -110,15 +105,18 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	bsp_insert(toplevel->workspace, toplevel);
 
-	int w = get_workspace_width(toplevel->server);
-	int h = get_workspace_height(toplevel->server);
+	int w, h;
+	get_output_size(toplevel->server, &w, &h);
 	bsp_arrange(toplevel->workspace, w, h);
 
-	if (toplevel->workspace != current) {
+	if (toplevel->workspace != current
+			|| toplevel->workspace->fullscreen_window) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
 
-	focus_toplevel(toplevel);
+	if (!toplevel->workspace->fullscreen_window) {
+		focus_toplevel(toplevel);
+	}
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
@@ -132,12 +130,13 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	wl_list_remove(&toplevel->link);
 	wl_list_remove(&toplevel->workspace_link);
+	wl_list_remove(&toplevel->floating_link);
 	wl_list_init(&toplevel->workspace_link);
 
 	bsp_remove(toplevel->workspace, toplevel);
 
-	int w = get_workspace_width(toplevel->server);
-	int h = get_workspace_height(toplevel->server);
+	int w, h;
+	get_output_size(toplevel->server, &w, &h);
 	bsp_arrange(toplevel->workspace, w, h);
 
 	struct uwm_workspace *ws = toplevel->workspace;
@@ -148,10 +147,15 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		if (!wl_list_empty(&ws->toplevels)) {
 			struct uwm_toplevel *next = wl_container_of(ws->toplevels.next, next, workspace_link);
 			ws->focused = next;
+		} else if (!wl_list_empty(&ws->floating_windows)) {
+			struct uwm_toplevel *next = wl_container_of(ws->floating_windows.next, next, floating_link);
+			ws->focused = next;
 		} else {
 			ws->focused = NULL;
 		}
 	}
+	if (ws->focused)
+		focus_toplevel(ws->focused);
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -185,28 +189,25 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		ws->last_focused = NULL;
 	if (ws->focused == toplevel)
 		ws->focused = NULL;
+	if (ws->fullscreen_window == toplevel)
+		ws->fullscreen_window = NULL;
 
 	free(toplevel);
 }
 
 static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) {
-	/* This event is raised when a client would like to begin an interactive
-	 * move, typically because the user clicked on their client-side
-	 * decorations. Note that a more sophisticated compositor should check the
-	 * provided serial against a list of button press serials sent to this
-	 * client, to prevent the client from requesting this whenever they want. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, request_move);
+	struct wlr_xdg_toplevel_move_event *event = data;
+	if (event->serial != toplevel->server->last_button_serial)
+		return;
 	begin_interactive(toplevel, UWM_CURSOR_MOVE, 0);
 }
 
 static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) {
-	/* This event is raised when a client would like to begin an interactive
-	 * resize, typically because the user clicked on their client-side
-	 * decorations. Note that a more sophisticated compositor should check the
-	 * provided serial against a list of button press serials sent to this
-	 * client, to prevent the client from requesting this whenever they want. */
 	struct wlr_xdg_toplevel_resize_event *event = data;
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, request_resize);
+	if (event->serial != toplevel->server->last_button_serial)
+		return;
 	begin_interactive(toplevel, UWM_CURSOR_RESIZE, event->edges);
 }
 
@@ -225,11 +226,14 @@ static void xdg_toplevel_request_maximize(struct wl_listener *listener, void *da
 }
 
 static void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data) {
-	/* Just as with request_maximize, we must send a configure here. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, request_fullscreen);
-	if (toplevel->xdg_toplevel->base->initialized) {
-		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
-	}
+	(void)data;
+	if (!toplevel->xdg_toplevel->base->initialized)
+		return;
+
+	if (toplevel->xdg_toplevel->requested.fullscreen != toplevel->fullscreen)
+		toggle_fullscreen(toplevel);
+	wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
@@ -243,9 +247,10 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->xdg_toplevel = xdg_toplevel;
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
 	wl_list_init(&toplevel->workspace_link);
-	toplevel->scene_tree = wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
+	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
+	wl_list_init(&toplevel->floating_link);
 
 	/* Listen to the various events it can emit */
 	toplevel->map.notify = xdg_toplevel_map;

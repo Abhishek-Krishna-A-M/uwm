@@ -12,6 +12,10 @@ struct uwm_keyboard {
 	struct uwm_server *server;
 	struct wlr_keyboard *wlr_keyboard;
 
+	struct wl_event_source *repeat_timer;
+	xkb_keysym_t repeat_sym;
+	uint32_t repeat_keycode;
+
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener destroy;

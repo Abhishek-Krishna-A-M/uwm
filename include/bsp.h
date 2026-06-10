@@ -2,14 +2,24 @@
 #define BSP_H
 
 #include <stdbool.h>
+#include <wayland-server-core.h>
 
 struct uwm_workspace;
 struct uwm_toplevel;
 struct uwm_server;
+struct wlr_scene_tree;
+struct wlr_scene_rect;
+struct wlr_buffer;
 
 enum uwm_split {
 	UWM_SPLIT_VERTICAL,
 	UWM_SPLIT_HORIZONTAL,
+};
+
+enum uwm_node_mode {
+	UWM_NODE_BSP,
+	UWM_NODE_TABBED,
+	UWM_NODE_MONOCLE,
 };
 
 struct uwm_bsp_node {
@@ -20,6 +30,12 @@ struct uwm_bsp_node {
 	enum uwm_split split;
 	float ratio;
 	int x, y, width, height;
+	enum uwm_node_mode mode;
+	struct uwm_bsp_node *active_child;
+	struct wlr_scene_tree *deco_tree;
+	struct wlr_buffer *tab_bar_buf;
+	int last_tab_count;
+	struct uwm_bsp_node *last_active_child;
 };
 
 struct uwm_bsp_node *bsp_insert(
@@ -27,6 +43,10 @@ struct uwm_bsp_node *bsp_insert(
 	struct uwm_toplevel *toplevel);
 
 void bsp_remove(
+	struct uwm_workspace *workspace,
+	struct uwm_toplevel *toplevel);
+
+void bsp_restore(
 	struct uwm_workspace *workspace,
 	struct uwm_toplevel *toplevel);
 
@@ -68,5 +88,19 @@ void bsp_rotate_split(
 
 void bsp_rotate_focused_split(
 	struct uwm_workspace *workspace);
+
+void bsp_collect_leaves(
+	struct uwm_bsp_node *node,
+	struct uwm_bsp_node **leaves, int *count, int capacity);
+
+struct uwm_bsp_node *bsp_find_tabbed_parent(
+	struct uwm_bsp_node *leaf);
+
+void bsp_arrange_workspace(
+	struct uwm_workspace *workspace);
+
+void get_output_size(
+	struct uwm_server *server,
+	int *width, int *height);
 
 #endif

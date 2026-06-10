@@ -13,6 +13,23 @@ struct uwm_toplevel {
 	struct wl_list workspace_link;
 	struct wlr_xdg_toplevel *xdg_toplevel;
 	struct wlr_scene_tree *scene_tree;
+
+	bool floating;
+	bool fullscreen;
+	int float_x, float_y, float_width, float_height;
+
+	int saved_x, saved_y, saved_width, saved_height;
+	bool saved_floating;
+
+	struct wl_list floating_link;
+
+	struct uwm_toplevel *bsp_saved_sibling;
+	enum uwm_split bsp_saved_split;
+	float bsp_saved_ratio;
+	enum uwm_node_mode bsp_saved_mode;
+	bool bsp_saved_is_second;
+	bool bsp_saved;
+
 	struct wl_listener map;
 	struct wl_listener unmap;
 	struct wl_listener commit;
