@@ -85,9 +85,12 @@ static void bsp_node_apply_geometry(struct uwm_bsp_node *node)
 		wlr_scene_node_set_position(
 			&node->toplevel->scene_tree->node, node->x, node->y);
 	if (node->width != node->toplevel->xdg_toplevel->base->current.geometry.width
-			|| node->height != node->toplevel->xdg_toplevel->base->current.geometry.height)
+			|| node->height != node->toplevel->xdg_toplevel->base->current.geometry.height) {
 		wlr_xdg_toplevel_set_size(
 			node->toplevel->xdg_toplevel, node->width, node->height);
+		wlr_xdg_toplevel_set_tiled(node->toplevel->xdg_toplevel,
+			WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
+	}
 }
 
 static void bsp_arrange_node_full(
@@ -114,7 +117,7 @@ static void bsp_arrange_node_full(
 }
 
 static void bsp_arrange_node(
-	struct uwm_bsp_node *node, int x, int y, int width, int height)
+	struct uwm_bsp_node *node, int x, int y, int width, int height, int gap)
 {
 	if (width <= 0 || height <= 0)
 		return;
@@ -134,13 +137,8 @@ static void bsp_arrange_node(
 
 	switch (node->mode) {
 	case UWM_NODE_TABBED: {
-		int tab_h = 24;
-		int content_y = y + tab_h;
-		int content_height = height - tab_h;
-		if (content_height < 1) content_height = 1;
-		bsp_arrange_node_full(node->first, x, content_y, width, content_height);
-		bsp_arrange_node_full(node->second, x, content_y, width, content_height);
-		update_tab_bar(node);
+		bsp_arrange_node_full(node->first, x, y, width, height);
+		bsp_arrange_node_full(node->second, x, y, width, height);
 		update_layout_visibility(node);
 		break;
 	}
@@ -157,37 +155,37 @@ static void bsp_arrange_node(
 	case UWM_NODE_BSP:
 	default:
 		if (node->split == UWM_SPLIT_VERTICAL) {
-			int first_w = (int)(width * node->ratio);
+			int first_w = (int)((width - gap) * node->ratio);
 			if (first_w < 1) first_w = 1;
-			int second_w = width - first_w;
-			if (second_w < 1) { second_w = 1; first_w = width - 1; }
-			if (first_w + second_w != width) {
-				first_w = width / 2;
-				second_w = width - first_w;
+			int second_w = width - gap - first_w;
+			if (second_w < 1) { second_w = 1; first_w = width - gap - 1; }
+			if (first_w + second_w + gap != width) {
+				first_w = (width - gap) / 2;
+				second_w = (width - gap) - first_w;
 				if (first_w < 1) first_w = 1;
 				if (second_w < 1) second_w = 1;
 			}
-			bsp_arrange_node(node->first, x, y, first_w, height);
-			bsp_arrange_node(node->second, x + first_w, y, second_w, height);
+			bsp_arrange_node(node->first, x, y, first_w, height, gap);
+			bsp_arrange_node(node->second, x + first_w + gap, y, second_w, height, gap);
 		} else {
-			int first_h = (int)(height * node->ratio);
+			int first_h = (int)((height - gap) * node->ratio);
 			if (first_h < 1) first_h = 1;
-			int second_h = height - first_h;
-			if (second_h < 1) { second_h = 1; first_h = height - 1; }
-			if (first_h + second_h != height) {
-				first_h = height / 2;
-				second_h = height - first_h;
+			int second_h = height - gap - first_h;
+			if (second_h < 1) { second_h = 1; first_h = height - gap - 1; }
+			if (first_h + second_h + gap != height) {
+				first_h = (height - gap) / 2;
+				second_h = (height - gap) - first_h;
 				if (first_h < 1) first_h = 1;
 				if (second_h < 1) second_h = 1;
 			}
-			bsp_arrange_node(node->first, x, y, width, first_h);
-			bsp_arrange_node(node->second, x, y + first_h, width, second_h);
+			bsp_arrange_node(node->first, x, y, width, first_h, gap);
+			bsp_arrange_node(node->second, x, y + first_h + gap, width, second_h, gap);
 		}
 		break;
 	}
 }
 
-void bsp_arrange(struct uwm_workspace *workspace, int width, int height)
+void bsp_arrange(struct uwm_workspace *workspace, int width, int height, int gap)
 {
 	if (workspace->root == NULL)
 		return;
@@ -203,7 +201,7 @@ void bsp_arrange(struct uwm_workspace *workspace, int width, int height)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
 		/* Arrange the focused window to fill the full workspace */
-		bsp_arrange_node(workspace->root, 0, 0, width, height);
+		bsp_arrange_node(workspace->root, 0, 0, width, height, gap);
 		/* Ensure focused window fills workspace regardless of tree arrangement */
 		wlr_scene_node_set_position(
 			&workspace->focused->scene_tree->node, 0, 0);
@@ -212,7 +210,7 @@ void bsp_arrange(struct uwm_workspace *workspace, int width, int height)
 		wlr_scene_node_set_enabled(
 			&workspace->focused->scene_tree->node, true);
 	} else {
-		bsp_arrange_node(workspace->root, 0, 0, width, height);
+		bsp_arrange_node(workspace->root, 0, 0, width, height, gap);
 	}
 }
 
@@ -224,10 +222,6 @@ void bsp_destroy(struct uwm_bsp_node *node)
 		bsp_destroy(node->first);
 	if (node->second)
 		bsp_destroy(node->second);
-	if (node->deco_tree)
-		wlr_scene_node_destroy(&node->deco_tree->node);
-	if (node->tab_bar_buf)
-		wlr_buffer_drop(node->tab_bar_buf);
 	free(node);
 }
 
@@ -404,8 +398,6 @@ void bsp_remove(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 		grandparent->second = sibling;
 	}
 
-	if (parent->deco_tree)
-		destroy_tab_bar(parent);
 	free(parent);
 	free(leaf);
 }
@@ -463,7 +455,7 @@ void bsp_arrange_workspace(struct uwm_workspace *workspace)
 	if (!server) return;
 	int w, h;
 	get_output_size(server, &w, &h);
-	bsp_arrange(workspace, w, h);
+	bsp_arrange(workspace, w, h, server->config.inner_gap);
 }
 
 static struct uwm_bsp_node *bsp_nearest_in_direction(

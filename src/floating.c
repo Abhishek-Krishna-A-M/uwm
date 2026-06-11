@@ -87,7 +87,7 @@ void toggle_floating(struct uwm_toplevel *window)
 		bsp_restore(ws, window);
 	}
 
-	bsp_arrange(ws, out_w, out_h);
+	bsp_arrange(ws, out_w, out_h, window->server->config.inner_gap);
 
 	if (ws->focused == window)
 		focus_toplevel(window);
@@ -177,7 +177,7 @@ wlr_scene_node_reparent(
 				window->server->tiled_layer);
 		}
 
-		bsp_arrange(ws, out_w, out_h);
+		bsp_arrange(ws, out_w, out_h, window->server->config.inner_gap);
 
 		if (ws->focused == window)
 			focus_toplevel(window);

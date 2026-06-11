@@ -10,6 +10,7 @@ struct uwm_config {
 	bool tap_to_click;
 	bool natural_scroll;
 	int accel_profile;
+	int inner_gap;
 };
 
 void config_load(struct uwm_config *config);

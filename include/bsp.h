@@ -8,8 +8,6 @@ struct uwm_workspace;
 struct uwm_toplevel;
 struct uwm_server;
 struct wlr_scene_tree;
-struct wlr_scene_rect;
-struct wlr_buffer;
 
 enum uwm_split {
 	UWM_SPLIT_VERTICAL,
@@ -32,10 +30,6 @@ struct uwm_bsp_node {
 	int x, y, width, height;
 	enum uwm_node_mode mode;
 	struct uwm_bsp_node *active_child;
-	struct wlr_scene_tree *deco_tree;
-	struct wlr_buffer *tab_bar_buf;
-	int last_tab_count;
-	struct uwm_bsp_node *last_active_child;
 };
 
 struct uwm_bsp_node *bsp_insert(
@@ -52,7 +46,7 @@ void bsp_restore(
 
 void bsp_arrange(
 	struct uwm_workspace *workspace,
-	int width, int height);
+	int width, int height, int gap);
 
 void bsp_destroy(
 	struct uwm_bsp_node *node);

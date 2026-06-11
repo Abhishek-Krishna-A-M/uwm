@@ -43,6 +43,8 @@ static void apply_config_line(struct uwm_config *config, const char *key, const 
 		parse_bool(value, &config->natural_scroll);
 	else if (strcmp(key, "accel_profile") == 0)
 		parse_int(value, &config->accel_profile);
+	else if (strcmp(key, "inner_gap") == 0)
+		parse_int(value, &config->inner_gap);
 }
 
 void config_load(struct uwm_config *config)
@@ -54,6 +56,7 @@ void config_load(struct uwm_config *config)
 		.tap_to_click = true,
 		.natural_scroll = true,
 		.accel_profile = 0,
+		.inner_gap = 5,
 	};
 
 	const char *home = getenv("HOME");

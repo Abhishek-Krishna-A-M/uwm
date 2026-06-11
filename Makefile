@@ -1,6 +1,6 @@
 PKG_CONFIG?=pkg-config
 
-PKGS="wlroots-0.20" wayland-server xkbcommon pangocairo libinput
+PKGS="wlroots-0.20" wayland-server xkbcommon libinput
 CFLAGS_PKG_CONFIG!=$(PKG_CONFIG) --cflags $(PKGS)
 
 # Append dynamic pkg-config flags and your static project flags

@@ -4,6 +4,7 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_server_decoration.h>
 #include "server.h"
 #include "input.h"
 #include "output.h"
@@ -98,6 +99,28 @@ bool server_init(struct uwm_server *server) {
 	server->new_xdg_popup.notify = server_new_xdg_popup;
 	wl_signal_add(&server->xdg_shell->events.new_popup, &server->new_xdg_popup);
 
+	/* Set up xdg-decoration protocol to request no decorations from clients.
+	 * This tells clients not to draw their own title bars or borders. */
+	server->xdg_decoration_manager = wlr_xdg_decoration_manager_v1_create(
+		server->wl_display);
+	if (server->xdg_decoration_manager) {
+		server->new_toplevel_decoration.notify = server_new_toplevel_decoration;
+		wl_signal_add(&server->xdg_decoration_manager->events.new_toplevel_decoration,
+			&server->new_toplevel_decoration);
+	}
+
+	/* Set up KDE server-decoration protocol. Some clients (e.g. GTK3) use
+	 * org_kde_kwin_server_decoration as their primary decoration negotiation
+	 * mechanism instead of xdg-decoration. Without this, GTK3 apps may
+	 * default to client-side decorations. */
+	server->server_decoration_manager = wlr_server_decoration_manager_create(
+		server->wl_display);
+	if (server->server_decoration_manager) {
+		wlr_server_decoration_manager_set_default_mode(
+			server->server_decoration_manager,
+			WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
+	}
+
 	/* Creates a cursor, which is a wlroots utility for tracking the cursor
 	 * image shown on screen.
 	 */
@@ -161,6 +184,9 @@ void server_finish(struct uwm_server *server) {
 
 	wl_list_remove(&server->new_xdg_toplevel.link);
 	wl_list_remove(&server->new_xdg_popup.link);
+	if (server->xdg_decoration_manager) {
+		wl_list_remove(&server->new_toplevel_decoration.link);
+	}
 
 	wl_list_remove(&server->cursor_motion.link);
 	wl_list_remove(&server->cursor_motion_absolute.link);

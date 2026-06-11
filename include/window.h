@@ -3,6 +3,7 @@
 
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include "server.h"
 
@@ -13,6 +14,7 @@ struct uwm_toplevel {
 	struct wl_list workspace_link;
 	struct wlr_xdg_toplevel *xdg_toplevel;
 	struct wlr_scene_tree *scene_tree;
+	struct wlr_xdg_toplevel_decoration_v1 *decoration;
 
 	bool floating;
 	bool fullscreen;
@@ -38,6 +40,9 @@ struct uwm_toplevel {
 	struct wl_listener request_resize;
 	struct wl_listener request_maximize;
 	struct wl_listener request_fullscreen;
+
+	struct wl_listener decoration_destroy;
+	struct wl_listener decoration_request_mode;
 };
 
 struct uwm_popup {
@@ -53,5 +58,6 @@ struct uwm_toplevel *desktop_toplevel_at(
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);
 void server_new_xdg_popup(struct wl_listener *listener, void *data);
+void server_new_toplevel_decoration(struct wl_listener *listener, void *data);
 
 #endif /* WINDOW_H */

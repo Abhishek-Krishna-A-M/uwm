@@ -117,7 +117,7 @@ static void bsp_arrange_current_workspace(struct uwm_server *server)
 	struct uwm_workspace *ws = &server->workspaces.workspaces[server->workspaces.current];
 	int w, h;
 	get_output_size(server, &w, &h);
-	bsp_arrange(ws, w, h);
+	bsp_arrange(ws, w, h, server->config.inner_gap);
 }
 
 static struct uwm_workspace *current_ws(struct uwm_server *server)
@@ -349,12 +349,9 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		else
 			toggle_fullscreen(current_ws(server)->focused);
 		break;
-	case XKB_KEY_m: {
-		if (modifiers & WLR_MODIFIER_SHIFT)
-			toggle_monocle(current_ws(server));
-		/* Tabbed mode is out of scope until core is stable */
+	case XKB_KEY_m:
+		toggle_monocle(current_ws(server));
 		break;
-	}
 	case XKB_KEY_t:
 		set_bsp_mode(current_ws(server));
 		break;
@@ -424,23 +421,63 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	bool handled = false;
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 
-	if ((modifiers & (WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT)) == (WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT)
+	/* Look up actual modifier indices from the XKB keymap instead of relying
+	 * on WLR_MODIFIER_* constants, which assume fixed modifier indices. */
+	struct xkb_keymap *keymap = keyboard->wlr_keyboard->keymap;
+	xkb_mod_mask_t ctrl_mask = 0, alt_mask = 0, logo_mask = 0;
+	xkb_mod_index_t idx;
+	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CTRL);
+	if (idx != XKB_MOD_INVALID) ctrl_mask = (xkb_mod_mask_t)1 << idx;
+	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_ALT);
+	if (idx != XKB_MOD_INVALID) alt_mask = (xkb_mod_mask_t)1 << idx;
+	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_LOGO);
+	if (idx != XKB_MOD_INVALID) logo_mask = (xkb_mod_mask_t)1 << idx;
+
+	/* Check for VT switching (Ctrl+Alt+F[1-12]).
+	 * NOTE: We check the hardware keycodes here instead of relying on
+	 * wlr_keyboard_get_modifiers() because wlroots 0.20 emits the key
+	 * event BEFORE updating the XKB/modifier state. If F1 arrives in
+	 * between Ctrl and Alt processing (common with simultaneous key
+	 * presses), the XKB modifier state would miss the Alt modifier.
+	 * The keycodes array is updated before the key event, so it always
+	 * reflects all physically held keys. */
+	bool ctrl_held = false, alt_held = false;
+	for (size_t i = 0; i < keyboard->wlr_keyboard->num_keycodes; i++) {
+		uint32_t kc = keyboard->wlr_keyboard->keycodes[i];
+		if (kc == KEY_LEFTCTRL || kc == KEY_RIGHTCTRL) ctrl_held = true;
+		if (kc == KEY_LEFTALT || kc == KEY_RIGHTALT) alt_held = true;
+	}
+
+	if (ctrl_held && alt_held
 			&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (int i = 0; i < nsyms; i++) {
+			unsigned vt = 0;
 			if (syms[i] >= XKB_KEY_F1 && syms[i] <= XKB_KEY_F12) {
-				unsigned vt = syms[i] - XKB_KEY_F1 + 1;
+				vt = syms[i] - XKB_KEY_F1 + 1;
+			} else if (syms[i] >= XKB_KEY_XF86Switch_VT_1
+					&& syms[i] <= XKB_KEY_XF86Switch_VT_12) {
+				vt = syms[i] - XKB_KEY_XF86Switch_VT_1 + 1;
+			}
+			if (vt > 0) {
 				if (server->session) {
-					wlr_session_change_vt(server->session, vt);
+					if (wlr_session_change_vt(server->session, vt)) {
+						wlr_log(WLR_INFO,
+							"Switched to VT %u", vt);
+					} else {
+						wlr_log(WLR_ERROR,
+							"VT switch to %u failed", vt);
+					}
 				} else {
 					wlr_log(WLR_ERROR,
-						"VT switching unavailable: no session backend");
+						"VT switching unavailable: no session backend."
+						" Install seatd or elogind.");
 				}
 				handled = true;
 			}
 		}
 	}
 
-	if (!handled && (modifiers & WLR_MODIFIER_LOGO) && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+	if (!handled && (modifiers & logo_mask) && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (int i = 0; i < nsyms; i++) {
 			handled = handle_keybinding(server, syms[i], modifiers);
 			if (handled) {
@@ -672,9 +709,12 @@ static void process_cursor_resize(struct uwm_server *server) {
 		toplevel->float_height = new_height;
 	}
 
-	struct wlr_box *geo_box = &toplevel->xdg_toplevel->base->geometry;
+	/* The scene node position for wlr_scene_xdg_surface IS the window
+	 * geometry (content) position. wlroots handles the geometry-to-surface
+	 * offset internally by positioning the scene buffer at
+	 * (-geometry.x, -geometry.y) within the scene tree. */
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
-		new_left - geo_box->x, new_top - geo_box->y);
+		new_left, new_top);
 	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, new_width, new_height);
 }
 

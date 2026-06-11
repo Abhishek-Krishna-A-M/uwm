@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_xdg_decoration_v1.h>
 #include "window.h"
 #include "input.h"
 #include "bsp.h"
@@ -38,7 +39,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			if (cont && cont->active_child != leaf) {
 				cont->active_child = leaf;
 				update_layout_visibility(cont);
-				update_tab_bar(cont);
 			}
 		}
 	}
@@ -47,7 +47,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (ws->monocle) {
 		int out_w, out_h;
 		get_output_size(server, &out_w, &out_h);
-		bsp_arrange(ws, out_w, out_h);
+		bsp_arrange(ws, out_w, out_h, server->config.inner_gap);
 	}
 
 	if (toplevel->floating) {
@@ -59,6 +59,13 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
+	/* Re-assert server-side decoration mode on focus. Some clients (e.g. GTK)
+	 * may try to revert to client-side decorations after the initial setup;
+	 * this ensures they stay in server-side mode. */
+	if (toplevel->decoration) {
+		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
+			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
@@ -107,7 +114,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	int w, h;
 	get_output_size(toplevel->server, &w, &h);
-	bsp_arrange(toplevel->workspace, w, h);
+	bsp_arrange(toplevel->workspace, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
 			|| toplevel->workspace->fullscreen_window) {
@@ -137,7 +144,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	int w, h;
 	get_output_size(toplevel->server, &w, &h);
-	bsp_arrange(toplevel->workspace, w, h);
+	bsp_arrange(toplevel->workspace, w, h, toplevel->server->config.inner_gap);
 
 	struct uwm_workspace *ws = toplevel->workspace;
 	if (ws->last_focused == toplevel)
@@ -154,8 +161,39 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 			ws->focused = NULL;
 		}
 	}
+
+	/* Exit monocle mode if no tiled windows remain */
+	if (ws->monocle && wl_list_empty(&ws->toplevels)) {
+		ws->monocle = false;
+		if (ws->root) {
+			set_children_visible(ws->root, true);
+			bsp_arrange(ws, w, h, toplevel->server->config.inner_gap);
+		}
+	}
+
 	if (ws->focused)
 		focus_toplevel(ws->focused);
+}
+
+static void decoration_handle_destroy(struct wl_listener *listener, void *data) {
+	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, decoration_destroy);
+	toplevel->decoration = NULL;
+	wl_list_remove(&toplevel->decoration_destroy.link);
+	wl_list_remove(&toplevel->decoration_request_mode.link);
+}
+
+static void decoration_handle_request_mode(struct wl_listener *listener, void *data) {
+	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, decoration_request_mode);
+	if (!toplevel->decoration) {
+		return;
+	}
+	/* If the surface isn't initialized yet, we can't schedule a configure.
+	 * The initial commit handler will override the mode anyway. */
+	if (!toplevel->xdg_toplevel->base->initialized) {
+		return;
+	}
+	wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
+		WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -163,11 +201,11 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
-		/* When an xdg_surface performs an initial commit, the compositor must
-		 * reply with a configure so the client can map the surface. uwm
-		 * configures the xdg_toplevel with 0,0 size to let the client pick the
-		 * dimensions itself. */
-		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		if (toplevel->decoration) {
+			wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
+				WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+		}
+		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
 }
 
@@ -183,6 +221,10 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+	if (toplevel->decoration) {
+		wl_list_remove(&toplevel->decoration_destroy.link);
+		wl_list_remove(&toplevel->decoration_request_mode.link);
+	}
 
 	struct uwm_workspace *ws = toplevel->workspace;
 	if (ws->last_focused == toplevel)
@@ -234,6 +276,23 @@ static void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *
 	if (toplevel->xdg_toplevel->requested.fullscreen != toplevel->fullscreen)
 		toggle_fullscreen(toplevel);
 	wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
+}
+
+void server_new_toplevel_decoration(struct wl_listener *listener,
+		void *data) {
+	/* Cannot call set_mode here because the xdg_surface has not yet been
+	 * initialized (no initial commit). Store the decoration and wait for
+	 * the commit handler to set the mode. */
+	struct wlr_xdg_toplevel_decoration_v1 *decoration = data;
+	struct wlr_xdg_surface *xdg_surface = decoration->toplevel->base;
+	struct wlr_scene_tree *tree = xdg_surface->data;
+	struct uwm_toplevel *toplevel = tree->node.data;
+	toplevel->decoration = decoration;
+
+	toplevel->decoration_destroy.notify = decoration_handle_destroy;
+	wl_signal_add(&decoration->events.destroy, &toplevel->decoration_destroy);
+	toplevel->decoration_request_mode.notify = decoration_handle_request_mode;
+	wl_signal_add(&decoration->events.request_mode, &toplevel->decoration_request_mode);
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {

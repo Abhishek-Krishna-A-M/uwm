@@ -9,18 +9,6 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
-static void set_deco_visible(struct uwm_bsp_node *node, bool visible)
-{
-	if (!node)
-		return;
-	if (node->deco_tree)
-		wlr_scene_node_set_enabled(&node->deco_tree->node, visible);
-	if (node->first)
-		set_deco_visible(node->first, visible);
-	if (node->second)
-		set_deco_visible(node->second, visible);
-}
-
 static void restore_container_visibility(struct uwm_bsp_node *node)
 {
 	if (!node)
@@ -29,7 +17,6 @@ static void restore_container_visibility(struct uwm_bsp_node *node)
 		if (node->mode == UWM_NODE_TABBED
 				|| node->mode == UWM_NODE_MONOCLE) {
 			update_layout_visibility(node);
-			update_tab_bar(node);
 		}
 		restore_container_visibility(node->first);
 		restore_container_visibility(node->second);
@@ -80,8 +67,6 @@ static void workspace_hide(struct uwm_workspace *ws)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
-	if (ws->root)
-		set_deco_visible(ws->root, false);
 }
 
 static void workspace_show(struct uwm_workspace *ws)
@@ -106,7 +91,6 @@ static void workspace_show(struct uwm_workspace *ws)
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
 	}
 	if (!ws->monocle && ws->root) {
-		set_deco_visible(ws->root, true);
 		restore_container_visibility(ws->root);
 	}
 }
@@ -209,8 +193,8 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 
 	int area_w, area_h;
 	get_output_size(toplevel->server, &area_w, &area_h);
-	bsp_arrange(old_ws, area_w, area_h);
-	bsp_arrange(new_ws, area_w, area_h);
+	bsp_arrange(old_ws, area_w, area_h, toplevel->server->config.inner_gap);
+	bsp_arrange(new_ws, area_w, area_h, toplevel->server->config.inner_gap);
 }
 
 void workspace_cycle_next(struct uwm_server *server)
@@ -252,6 +236,6 @@ void workspace_cycle_next(struct uwm_server *server)
 	if (ws->monocle) {
 		int out_w, out_h;
 		get_output_size(server, &out_w, &out_h);
-		bsp_arrange(ws, out_w, out_h);
+		bsp_arrange(ws, out_w, out_h, server->config.inner_gap);
 	}
 }
