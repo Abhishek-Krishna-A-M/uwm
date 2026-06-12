@@ -13,8 +13,12 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/backend/session.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_idle_inhibit_v1.h>
 #include "config.h"
 #include "workspace.h"
+#include "layer_shell.h"
+#include "idle_inhibit.h"
 
 /* Forward declaration to break circular dependency */
 struct uwm_toplevel;
@@ -73,6 +77,14 @@ struct uwm_server {
 	struct wlr_session *session;
 	struct uwm_config config;
 	uint32_t last_button_serial;
+
+	/* Layer shell support */
+	struct uwm_layer_shell layer_shell;
+	struct wl_list layer_surfaces;
+
+	/* Idle inhibitor support */
+	struct uwm_idle_inhibit idle_inhibit;
+	struct wl_list idle_inhibitors;
 };
 
 bool server_init(struct uwm_server *server);

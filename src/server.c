@@ -9,6 +9,8 @@
 #include "input.h"
 #include "output.h"
 #include "window.h"
+#include "layer_shell.h"
+#include "idle_inhibit.h"
 
 bool server_init(struct uwm_server *server) {
 	signal(SIGCHLD, SIG_IGN);
@@ -84,6 +86,13 @@ bool server_init(struct uwm_server *server) {
 	 * necessary.
 	 */
 	server->scene = wlr_scene_create();
+	/* Scene graph order (bottom to top):
+	 * tiled_layer -> layer_bottom -> layer_background -> [output layout] ->
+	 * layer_floating -> floating_layer -> layer_top -> layer_overlay
+	 *
+	 * Per-output layer trees are created in server_new_output().
+	 * tiled_layer and floating_layer are placeholders that output layer trees
+	 * are positioned between. */
 	server->tiled_layer = wlr_scene_tree_create(&server->scene->tree);
 	server->floating_layer = wlr_scene_tree_create(&server->scene->tree);
 	server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
@@ -173,12 +182,29 @@ bool server_init(struct uwm_server *server) {
 		server->workspaces.workspaces[i].focus_follows_pointer
 			= server->config.focus_follows_pointer;
 
+	/* Initialize layer shell protocol */
+	if (!layer_shell_create(server)) {
+		wlr_log(WLR_ERROR, "Failed to create layer shell");
+		return false;
+	}
+
+	/* Initialize idle inhibit protocol */
+	if (!idle_inhibit_create(server)) {
+		wlr_log(WLR_ERROR, "Failed to create idle inhibit");
+		layer_shell_destroy(server);
+		return false;
+	}
+
 	return true;
 }
 
 void server_finish(struct uwm_server *server) {
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
+
+	/* Clean up layer shell and idle inhibit */
+	layer_shell_destroy(server);
+	idle_inhibit_destroy(server);
 
 	workspace_manager_finish(&server->workspaces);
 

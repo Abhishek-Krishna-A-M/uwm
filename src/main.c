@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <wlr/util/log.h>
 #include "server.h"
+#include "layer_shell.h"
+#include "idle_inhibit.h"
 
 int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_DEBUG, NULL);

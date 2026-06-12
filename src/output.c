@@ -2,6 +2,9 @@
 #include <time.h>
 #include <wlr/types/wlr_scene.h>
 #include "output.h"
+#include "layer_shell.h"
+#include "bsp.h"
+#include "workspace.h"
 
 static void output_frame(struct wl_listener *listener, void *data) {
 	/* This function is called every time an output is ready to display a frame,
@@ -26,15 +29,43 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = wl_container_of(listener, output, request_state);
 	const struct wlr_output_event_request_state *event = data;
 	wlr_output_commit_state(output->wlr_output, event->state);
+
+	/* Rearrange layers and workspaces after mode change */
+	layer_surface_arrange(output);
+
+	struct uwm_server *server = output->server;
+	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
+		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
+		if (ws->root) {
+			int w, h;
+			get_output_size(server, &w, &h);
+			bsp_arrange(ws, w, h, server->config.inner_gap);
+		}
+	}
 }
 
 static void output_destroy(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = wl_container_of(listener, output, destroy);
+	struct uwm_server *server = output->server;
 
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
 	wl_list_remove(&output->destroy.link);
 	wl_list_remove(&output->link);
+
+	/* Rearrange layer surfaces for remaining outputs */
+	layer_surface_arrange_all(server);
+
+	/* Rearrange workspaces for remaining outputs */
+	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
+		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
+		if (ws->root) {
+			int w, h;
+			get_output_size(server, &w, &h);
+			bsp_arrange(ws, w, h, server->config.inner_gap);
+		}
+	}
+
 	free(output);
 }
 
@@ -72,6 +103,32 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->wlr_output = wlr_output;
 	output->server = server;
 
+	/* Create per-output layer trees in bottom-to-top order.
+	 * Position them relative to the global tiled_layer and floating_layer:
+	 * tiled_layer -> layer_background -> layer_bottom -> [output layout] ->
+	 * layer_floating -> floating_layer -> layer_top -> layer_overlay */
+	output->layer_background = wlr_scene_tree_create(&server->scene->tree);
+	output->layer_bottom = wlr_scene_tree_create(&server->scene->tree);
+	output->layer_floating = wlr_scene_tree_create(&server->scene->tree);
+	output->layer_top = wlr_scene_tree_create(&server->scene->tree);
+	output->layer_overlay = wlr_scene_tree_create(&server->scene->tree);
+
+	/* Position layer_background after tiled_layer */
+	wlr_scene_node_place_above(&output->layer_background->node,
+		&server->tiled_layer->node);
+	/* Position layer_bottom after layer_background */
+	wlr_scene_node_place_above(&output->layer_bottom->node,
+		&output->layer_background->node);
+	/* Position layer_floating before floating_layer */
+	wlr_scene_node_place_below(&output->layer_floating->node,
+		&server->floating_layer->node);
+	/* Position layer_top after floating_layer */
+	wlr_scene_node_place_above(&output->layer_top->node,
+		&server->floating_layer->node);
+	/* Position layer_overlay after layer_top */
+	wlr_scene_node_place_above(&output->layer_overlay->node,
+		&output->layer_top->node);
+
 	/* Sets up a listener for the frame event. */
 	output->frame.notify = output_frame;
 	wl_signal_add(&wlr_output->events.frame, &output->frame);
@@ -85,6 +142,9 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	wl_signal_add(&wlr_output->events.destroy, &output->destroy);
 
 	wl_list_insert(&server->outputs, &output->link);
+
+	/* Rearrange layer surfaces for this output */
+	layer_surface_arrange(output);
 
 	/* Adds this to the output layout. The add_auto function arranges outputs
 	 * from left-to-right in the order they appear. A more sophisticated
