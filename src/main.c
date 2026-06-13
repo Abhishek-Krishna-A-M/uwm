@@ -54,7 +54,9 @@ int main(int argc, char *argv[]) {
 	setenv("WAYLAND_DISPLAY", socket, true);
 	if (startup_cmd) {
 		if (fork() == 0) {
-			execl("/bin/sh", "/bin/sh", "-c", startup_cmd, (void *)NULL);
+			char *args[] = { "sh", "-c", startup_cmd, NULL };
+			execvp("sh", args);
+			_exit(1);
 		}
 	}
 	

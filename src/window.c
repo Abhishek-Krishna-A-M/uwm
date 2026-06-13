@@ -1,6 +1,9 @@
 #include <assert.h>
 #include <stdlib.h>
+#include <wlr/util/log.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include "window.h"
 #include "input.h"
@@ -13,6 +16,13 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (toplevel == NULL) {
 		return;
 	}
+	/* Transient helpers must never receive keyboard focus.
+	 * We use the flag set once at map time instead of should_tile_toplevel()
+	 * because the client may commit non-zero constraints after map, which
+	 * would make the heuristic return the wrong answer. */
+	if (toplevel->is_transient) {
+		return;
+	}
 	struct uwm_server *server = toplevel->server;
 	struct wlr_seat *seat = server->seat;
 	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
@@ -20,6 +30,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (prev_surface == surface) {
 		return;
 	}
+
+	const char *new_app_id = toplevel->xdg_toplevel->app_id;
+	const char *new_title = toplevel->xdg_toplevel->title;
+	wlr_log(WLR_INFO, "FOCUS: new app_id=%s title=%s",
+		new_app_id ? new_app_id : "(nil)", new_title ? new_title : "(nil)");
 	if (prev_surface) {
 		struct wlr_xdg_toplevel *prev_toplevel = wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
 		if (prev_toplevel != NULL) {
@@ -59,17 +74,30 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
-	/* Re-assert server-side decoration mode on focus. Some clients (e.g. GTK)
-	 * may try to revert to client-side decorations after the initial setup;
-	 * this ensures they stay in server-side mode. */
 	if (toplevel->decoration) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
+		wlr_log(WLR_INFO, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
+			(void *)surface,
+			toplevel->xdg_toplevel->app_id ? toplevel->xdg_toplevel->app_id : "(nil)",
+			toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(nil)");
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+	}
+
+	/* Warp cursor to center of window if not already inside */
+	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	double wx = toplevel->scene_tree->node.x + geo.x;
+	double wy = toplevel->scene_tree->node.y + geo.y;
+	double ww = geo.width;
+	double wh = geo.height;
+	if (ww > 0 && wh > 0 &&
+			(server->cursor->x < wx || server->cursor->x >= wx + ww ||
+			 server->cursor->y < wy || server->cursor->y >= wy + wh)) {
+		wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
 	}
 }
 
@@ -90,6 +118,29 @@ struct uwm_toplevel *desktop_toplevel_at(
 	}
 
 	*surface = scene_surface->surface;
+
+	/* Don't return layer surfaces (or their subsurfaces/popups) as toplevels.
+	 * Walk up the surface tree to check if any ancestor is a layer surface. */
+	struct wlr_surface *check = *surface;
+	do {
+		if (!check) break;
+		if (wlr_layer_surface_v1_try_from_wlr_surface(check)) {
+			return NULL;
+		}
+		struct wlr_subsurface *sub = wlr_subsurface_try_from_wlr_surface(check);
+		if (sub) {
+			check = wlr_surface_get_root_surface(check);
+			continue;
+		}
+		struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(check);
+		if (xdg && xdg->role == WLR_XDG_SURFACE_ROLE_POPUP) {
+			if (!xdg->popup || !xdg->popup->parent) break;
+			check = wlr_surface_get_root_surface(xdg->popup->parent);
+			continue;
+		}
+		break;
+	} while (true);
+
 	/* Find the node corresponding to the uwm_toplevel at the root of this
 	 * surface tree, it is the only one for which we set the data field. */
 	struct wlr_scene_tree *tree = node->parent;
@@ -98,15 +149,52 @@ struct uwm_toplevel *desktop_toplevel_at(
 	}
 	if (!tree)
 		return NULL;
-	return tree->node.data;
+	struct uwm_toplevel *result = tree->node.data;
+	if (result->is_transient) {
+		*surface = NULL;
+		return NULL;
+	}
+	return result;
+}
+
+bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
+	struct wlr_xdg_toplevel *xdt = toplevel->xdg_toplevel;
+
+	/* Transient helpers (clipboard managers, portals, etc.) create a
+	 * toplevel, do their work, and exit within a single event loop.
+	 * At map time they have not set any size constraints, so all four
+	 * min/max values are zero.  A real application window will always
+	 * have at least a non-zero max size from its configure. */
+	if (xdt->current.min_width == 0 && xdt->current.min_height == 0
+			&& xdt->current.max_width == 0 && xdt->current.max_height == 0) {
+		return false;
+	}
+
+	return true;
 }
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
+	const char *app_id = toplevel->xdg_toplevel->app_id;
+	const char *title = toplevel->xdg_toplevel->title;
+	struct wlr_seat *seat = toplevel->server->seat;
+	wlr_log(WLR_INFO, "MAP: app_id=%s title=%s kb_focus_before=%p",
+		app_id ? app_id : "(nil)", title ? title : "(nil)",
+		(void *)seat->keyboard_state.focused_surface);
+
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 	wl_list_insert(&toplevel->workspace->toplevels, &toplevel->workspace_link);
+
+	/* Mark transient helpers at map time. The flag is permanent —
+	 * should_tile_toplevel() can give different results later once the
+	 * client commits non-zero constraints, so we snapshot the decision here. */
+	if (!should_tile_toplevel(toplevel)) {
+		toplevel->is_transient = true;
+		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
+		return;
+	}
 
 	struct uwm_workspace *current = &toplevel->server->workspaces.workspaces[toplevel->server->workspaces.current];
 
@@ -130,6 +218,13 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
 
+	const char *app_id = toplevel->xdg_toplevel->app_id;
+	const char *title = toplevel->xdg_toplevel->title;
+	struct wlr_seat *seat = toplevel->server->seat;
+	wlr_log(WLR_INFO, "UNMAP: app_id=%s title=%s kb_focused_surface=%p",
+		app_id ? app_id : "(nil)", title ? title : "(nil)",
+		(void *)seat->keyboard_state.focused_surface);
+
 	/* Reset the cursor mode if the grabbed toplevel was unmapped. */
 	if (toplevel == toplevel->server->grabbed_toplevel) {
 		reset_cursor_mode(toplevel->server);
@@ -150,15 +245,19 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (ws->last_focused == toplevel)
 		ws->last_focused = NULL;
 
-	if (ws->focused == toplevel) {
-		if (!wl_list_empty(&ws->toplevels)) {
-			struct uwm_toplevel *next = wl_container_of(ws->toplevels.next, next, workspace_link);
-			ws->focused = next;
-		} else if (!wl_list_empty(&ws->floating_windows)) {
-			struct uwm_toplevel *next = wl_container_of(ws->floating_windows.next, next, floating_link);
-			ws->focused = next;
-		} else {
-			ws->focused = NULL;
+	bool focus_was_displaced = (ws->focused == toplevel);
+	if (focus_was_displaced) {
+		ws->focused = NULL;
+		struct uwm_toplevel *candidate;
+		wl_list_for_each(candidate, &ws->toplevels, workspace_link) {
+			if (!candidate->is_transient) {
+				ws->focused = candidate;
+				break;
+			}
+		}
+		if (!ws->focused && !wl_list_empty(&ws->floating_windows)) {
+			candidate = wl_container_of(ws->floating_windows.next, candidate, floating_link);
+			ws->focused = candidate;
 		}
 	}
 
@@ -171,8 +270,30 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	if (ws->focused)
-		focus_toplevel(ws->focused);
+	/* Restore keyboard focus only if the unmap actually displaced the
+	 * focused window (i.e. ws->focused was pointing to the toplevel that
+	 * just unmapped). Transient helpers never take focus (focus_toplevel
+	 * refuses them), so ws->focused never points to them, and this block
+	 * is correctly skipped — no spurious leave/enter events are sent. */
+	if (focus_was_displaced && ws->focused) {
+		struct wlr_surface *target_surface = ws->focused->xdg_toplevel->base->surface;
+		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+		if (keyboard) {
+			wlr_log(WLR_INFO, "UNMAP: restoring kb focus to app_id=%s title=%s",
+				ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
+				ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
+			/* Don't call clear_focus — just enter the new surface directly.
+			 * Calling clear_focus can corrupt seat state if another event handler
+			 * (like layer shell) also tries to update focus. DWL and Sway both
+			 * avoid calling clear_focus in event handlers — they only call enter. */
+			wlr_seat_keyboard_notify_enter(seat, target_surface,
+				keyboard->keycodes, keyboard->num_keycodes,
+				&keyboard->modifiers);
+		}
+	} else if (!ws->focused) {
+		wlr_log(WLR_INFO, "UNMAP: no focused window, clearing keyboard focus");
+		wlr_seat_keyboard_notify_clear_focus(seat);
+	}
 }
 
 static void decoration_handle_destroy(struct wl_listener *listener, void *data) {
@@ -305,6 +426,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
+	wl_list_init(&toplevel->link);
 	wl_list_init(&toplevel->workspace_link);
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;

@@ -4,13 +4,33 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_data_control_v1.h>
+#include <wlr/types/wlr_ext_data_control_v1.h>
+#include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_server_decoration.h>
+#include <wlr/types/wlr_output_management_v1.h>
+#include <wlr/types/wlr_xdg_output_v1.h>
 #include "server.h"
 #include "input.h"
 #include "output.h"
 #include "window.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
+
+static void handle_transient_seat_create(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, transient_seat_create);
+	struct wlr_transient_seat_v1 *transient_seat = data;
+	static uint64_t i;
+	char name[64];
+	snprintf(name, sizeof(name), "transient-%" PRIx64, i++);
+	struct wlr_seat *new_seat = wlr_seat_create(server->wl_display, name);
+	if (new_seat) {
+		wlr_seat_set_capabilities(new_seat, WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_POINTER);
+		wlr_transient_seat_v1_ready(transient_seat, new_seat);
+	} else {
+		wlr_transient_seat_v1_deny(transient_seat);
+	}
+}
 
 bool server_init(struct uwm_server *server) {
 	signal(SIGCHLD, SIG_IGN);
@@ -68,6 +88,20 @@ bool server_init(struct uwm_server *server) {
 	wlr_compositor_create(server->wl_display, 5, server->renderer);
 	wlr_subcompositor_create(server->wl_display);
 	wlr_data_device_manager_create(server->wl_display);
+	wlr_primary_selection_v1_device_manager_create(server->wl_display);
+	wlr_data_control_manager_v1_create(server->wl_display);
+	wlr_ext_data_control_manager_v1_create(server->wl_display, 1);
+
+	/* Transient seat protocol: allows clipboard helpers and similar to request
+	 * a separate seat so their keyboard focus doesn't interfere with the main
+	 * seat. The wlr_seat they get is independent — they can request keyboard
+	 * focus on it without stealing it from the main seat. */
+	server->transient_seat_manager = wlr_transient_seat_manager_v1_create(server->wl_display);
+	if (server->transient_seat_manager) {
+		server->transient_seat_create.notify = handle_transient_seat_create;
+		wl_signal_add(&server->transient_seat_manager->events.create_seat,
+			&server->transient_seat_create);
+	}
 
 	/* Creates an output layout, which a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
@@ -130,6 +164,13 @@ bool server_init(struct uwm_server *server) {
 			WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
 	}
 
+	/* Set up output management and xdg-output protocol. These allow clients
+	 * like slurp and grim to query the output layout (position, size, scale). */
+	wlr_output_manager_v1_create(server->wl_display);
+	if (!wlr_xdg_output_manager_v1_create(server->wl_display, server->output_layout)) {
+		wlr_log(WLR_ERROR, "Failed to create xdg-output manager");
+	}
+
 	/* Creates a cursor, which is a wlroots utility for tracking the cursor
 	 * image shown on screen.
 	 */
@@ -175,6 +216,8 @@ bool server_init(struct uwm_server *server) {
 	wl_signal_add(&server->seat->pointer_state.events.focus_change, &server->pointer_focus_change);
 	server->request_set_selection.notify = seat_request_set_selection;
 	wl_signal_add(&server->seat->events.request_set_selection, &server->request_set_selection);
+	server->request_set_primary_selection.notify = seat_request_set_primary_selection;
+	wl_signal_add(&server->seat->events.request_set_primary_selection, &server->request_set_primary_selection);
 
 	workspace_manager_init(&server->workspaces);
 
@@ -195,6 +238,23 @@ bool server_init(struct uwm_server *server) {
 		return false;
 	}
 
+	/* Initialize screencopy protocol */
+	server->screencopy_manager = wlr_screencopy_manager_v1_create(server->wl_display);
+	if (!server->screencopy_manager) {
+		wlr_log(WLR_ERROR, "Failed to create screencopy manager");
+		idle_inhibit_destroy(server);
+		layer_shell_destroy(server);
+		return false;
+	}
+	server->ext_image_copy_capture_manager =
+		wlr_ext_image_copy_capture_manager_v1_create(server->wl_display, 1);
+	if (!server->ext_image_copy_capture_manager) {
+		wlr_log(WLR_ERROR, "Failed to create ext image copy capture manager");
+		idle_inhibit_destroy(server);
+		layer_shell_destroy(server);
+		return false;
+	}
+
 	return true;
 }
 
@@ -202,7 +262,7 @@ void server_finish(struct uwm_server *server) {
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
 
-	/* Clean up layer shell and idle inhibit */
+	/* Clean up layer shell, idle inhibit, and screencopy */
 	layer_shell_destroy(server);
 	idle_inhibit_destroy(server);
 
@@ -212,6 +272,9 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->new_xdg_popup.link);
 	if (server->xdg_decoration_manager) {
 		wl_list_remove(&server->new_toplevel_decoration.link);
+	}
+	if (server->transient_seat_manager) {
+		wl_list_remove(&server->transient_seat_create.link);
 	}
 
 	wl_list_remove(&server->cursor_motion.link);
@@ -224,6 +287,7 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->request_cursor.link);
 	wl_list_remove(&server->pointer_focus_change.link);
 	wl_list_remove(&server->request_set_selection.link);
+	wl_list_remove(&server->request_set_primary_selection.link);
 
 	wl_list_remove(&server->new_output.link);
 

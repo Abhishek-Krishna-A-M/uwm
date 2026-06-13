@@ -18,6 +18,7 @@ struct uwm_toplevel {
 
 	bool floating;
 	bool fullscreen;
+	bool is_transient;
 	int float_x, float_y, float_width, float_height;
 
 	int saved_x, saved_y, saved_width, saved_height;
@@ -52,6 +53,7 @@ struct uwm_popup {
 };
 
 void focus_toplevel(struct uwm_toplevel *toplevel);
+bool should_tile_toplevel(struct uwm_toplevel *toplevel);
 struct uwm_toplevel *desktop_toplevel_at(
 		struct uwm_server *server, double lx, double ly,
 		struct wlr_surface **surface, double *sx, double *sy);

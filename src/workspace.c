@@ -211,11 +211,11 @@ void workspace_cycle_next(struct uwm_server *server)
 
 	struct uwm_toplevel *tl;
 	wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-		if (count < 256)
+		if (count < 256 && !tl->is_transient)
 			windows[count++] = tl;
 	}
 	wl_list_for_each(tl, &ws->floating_windows, floating_link) {
-		if (count < 256)
+		if (count < 256 && !tl->is_transient)
 			windows[count++] = tl;
 	}
 
@@ -238,4 +238,18 @@ void workspace_cycle_next(struct uwm_server *server)
 		get_output_size(server, &out_w, &out_h);
 		bsp_arrange(ws, out_w, out_h, server->config.inner_gap);
 	}
+}
+
+void workspace_prev(struct uwm_server *server)
+{
+	uint32_t current = server->workspaces.current;
+	uint32_t prev = (current == 0) ? UWM_WORKSPACE_COUNT - 1 : current - 1;
+	workspace_switch(server, prev);
+}
+
+void workspace_next(struct uwm_server *server)
+{
+	uint32_t current = server->workspaces.current;
+	uint32_t next = (current + 1) % UWM_WORKSPACE_COUNT;
+	workspace_switch(server, next);
 }

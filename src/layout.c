@@ -3,6 +3,7 @@
 #include <wlr/types/wlr_scene.h>
 #include "layout.h"
 #include "bsp.h"
+#include "floating.h"
 #include "window.h"
 #include "workspace.h"
 #include "server.h"
@@ -106,25 +107,21 @@ void toggle_monocle(struct uwm_workspace *workspace)
 
 void set_bsp_mode(struct uwm_workspace *workspace)
 {
-	if (!workspace || !workspace->focused)
+	if (!workspace)
 		return;
 
-	struct uwm_bsp_node *leaf = bsp_find_leaf(
-		workspace->root, workspace->focused);
-	if (!leaf)
+	struct uwm_toplevel *focused = workspace->focused;
+	if (!focused)
 		return;
 
-	struct uwm_bsp_node *container = bsp_find_tabbed_parent(leaf);
-	if (!container)
-		container = leaf->parent;
-	if (!container || container->mode == UWM_NODE_BSP)
-		return;
+	if (focused->fullscreen)
+		toggle_fullscreen(focused);
 
-	container->mode = UWM_NODE_BSP;
-	container->active_child = NULL;
+	if (focused->floating)
+		toggle_floating(focused);
 
-	set_children_visible(container, true);
-	bsp_arrange_workspace(workspace);
+	if (workspace->monocle)
+		toggle_monocle(workspace);
 }
 
 void cycle_layout_child(struct uwm_workspace *workspace)

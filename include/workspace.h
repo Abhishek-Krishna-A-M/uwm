@@ -38,4 +38,6 @@ void workspace_switch(struct uwm_server *server, uint32_t workspace);
 void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace);
 void workspace_focus_previous(struct uwm_server *server);
 void workspace_cycle_next(struct uwm_server *server);
+void workspace_prev(struct uwm_server *server);
+void workspace_next(struct uwm_server *server);
 #endif

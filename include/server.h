@@ -15,6 +15,9 @@
 #include <wlr/backend/session.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
+#include <wlr/types/wlr_screencopy_v1.h>
+#include <wlr/types/wlr_ext_image_copy_capture_v1.h>
+#include <wlr/types/wlr_transient_seat_v1.h>
 #include "config.h"
 #include "workspace.h"
 #include "layer_shell.h"
@@ -62,6 +65,7 @@ struct uwm_server {
 	struct wl_listener request_cursor;
 	struct wl_listener pointer_focus_change;
 	struct wl_listener request_set_selection;
+	struct wl_listener request_set_primary_selection;
 	struct wl_list keyboards;
 	enum uwm_cursor_mode cursor_mode;
 	struct uwm_toplevel *grabbed_toplevel;
@@ -85,6 +89,14 @@ struct uwm_server {
 	/* Idle inhibitor support */
 	struct uwm_idle_inhibit idle_inhibit;
 	struct wl_list idle_inhibitors;
+
+	/* Screencopy support */
+	struct wlr_screencopy_manager_v1 *screencopy_manager;
+	struct wlr_ext_image_copy_capture_manager_v1 *ext_image_copy_capture_manager;
+
+	/* Transient seat protocol support */
+	struct wlr_transient_seat_manager_v1 *transient_seat_manager;
+	struct wl_listener transient_seat_create;
 };
 
 bool server_init(struct uwm_server *server);

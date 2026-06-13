@@ -2,11 +2,13 @@
 #include <stdbool.h>
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 #include <libinput.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/backend/libinput.h>
 #include "input.h"
@@ -146,8 +148,9 @@ static void force_close_focused(struct uwm_server *server)
 static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint32_t modifiers) {
 	sym = xkb_keysym_to_lower(sym);
 	switch (sym) {
-	case XKB_KEY_Escape:
-		wl_display_terminate(server->wl_display);
+	case XKB_KEY_q:
+		if (modifiers & WLR_MODIFIER_ALT)
+			wl_display_terminate(server->wl_display);
 		break;
 	case XKB_KEY_Tab:
 		if (server->workspaces.last != server->workspaces.current)
@@ -329,14 +332,35 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		if (modifiers & WLR_MODIFIER_SHIFT) {
 			bsp_rotate_focused_split(current_ws(server));
 			bsp_arrange_current_workspace(server);
+		} else if (modifiers & WLR_MODIFIER_ALT) {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"swaymsg reload 2>/dev/null || true",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
 		} else if (fork() == 0) {
-			execl("/usr/bin/fuzzel", "fuzzel", (void *)NULL);
+			char *args[] = { "fuzzel",
+				"--no-icons", "--prompt=\xef\x8c\xbb Apps: ",
+				NULL };
+			execvp("fuzzel", args);
 			_exit(1);
 		}
 		break;
 	case XKB_KEY_Return:
 		if (fork() == 0) {
-			execl("/usr/bin/foot", "foot", (void *)NULL);
+			char *args[] = { "foot", NULL };
+			execvp("foot", args);
+			_exit(1);
+		}
+		break;
+	case XKB_KEY_e:
+		if (fork() == 0) {
+			char *args[] = { "sh", "-c",
+				"compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r",
+				NULL };
+			execvp("sh", args);
 			_exit(1);
 		}
 		break;
@@ -344,10 +368,23 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		workspace_cycle_next(server);
 		break;
 	case XKB_KEY_f:
-		if (modifiers & WLR_MODIFIER_SHIFT)
-			toggle_floating(current_ws(server)->focused);
-		else
+		if (modifiers & WLR_MODIFIER_ALT) {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"file=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt=\"\xef\x8f\x91 Find File: \"); [ -n \"$file\" ] || exit 0; file=\"$HOME/$file\"; foot -e sh -c \"cd \\\"$(dirname \\\"$(realpath \\\"$file\\\")\\\")\\\" && nvim \\\"$(realpath \\\"$file\\\")\\\" && exec $SHELL\"",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
+		} else if (modifiers & WLR_MODIFIER_SHIFT) {
+			if (fork() == 0) {
+				char *args[] = { "foot", "-e", "lf", NULL };
+				execvp("foot", args);
+				_exit(1);
+			}
+		} else {
 			toggle_fullscreen(current_ws(server)->focused);
+		}
 		break;
 	case XKB_KEY_m:
 		toggle_monocle(current_ws(server));
@@ -362,6 +399,71 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 			close_focused(server);
 		break;
 	}
+	case XKB_KEY_x:
+		if (modifiers & WLR_MODIFIER_ALT) {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"~/.config/custom_scripts/powermenu.sh",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
+		}
+		break;
+	case XKB_KEY_s:
+		if (modifiers & WLR_MODIFIER_SHIFT) {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"grim -g \"$(slurp)\" - | wl-copy",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
+		} else {
+			toggle_floating(current_ws(server)->focused);
+		}
+		break;
+	case XKB_KEY_Print:
+		if (fork() == 0) {
+			char path[512];
+			const char *home = getenv("HOME");
+			if (!home) home = "/tmp";
+			time_t t = time(NULL);
+			struct tm *tm = localtime(&t);
+			char ts[32];
+			strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", tm);
+			snprintf(path, sizeof(path),
+				"%s/Pictures/Screenshots/%s.png", home, ts);
+			char *args[] = { "grim", path, NULL };
+			execvp("grim", args);
+			_exit(1);
+		}
+		break;
+	case XKB_KEY_space:
+		if (modifiers & WLR_MODIFIER_ALT) {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"~/.config/custom_scripts/hdmi.sh",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
+		} else {
+			if (fork() == 0) {
+				char *args[] = { "sh", "-c",
+					"~/.config/custom_scripts/window_switcher.sh",
+					NULL };
+				execvp("sh", args);
+				_exit(1);
+			}
+		}
+		break;
+	case XKB_KEY_bracketleft:
+		workspace_prev(server);
+		break;
+	case XKB_KEY_bracketright:
+		workspace_next(server);
+		break;
 	default: {
 		uint32_t ws = 0;
 		bool is_num = false;
@@ -473,6 +575,78 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 						" Install seatd or elogind.");
 				}
 				handled = true;
+			}
+		}
+	}
+
+	/* Media keys and Print (no modifier required) */
+	if (!handled && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		for (int i = 0; i < nsyms; i++) {
+			switch (syms[i]) {
+			case XKB_KEY_Print:
+				if (modifiers & logo_mask)
+					break;
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			case XKB_KEY_XF86AudioRaiseVolume:
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"pactl set-sink-volume @DEFAULT_SINK@ +5%",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			case XKB_KEY_XF86AudioLowerVolume:
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"pactl set-sink-volume @DEFAULT_SINK@ -5%",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			case XKB_KEY_XF86AudioMute:
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"pactl set-sink-mute @DEFAULT_SINK@ toggle",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			case XKB_KEY_XF86MonBrightnessUp:
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"brightnessctl set +10%",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			case XKB_KEY_XF86MonBrightnessDown:
+				if (fork() == 0) {
+					char *args[] = { "sh", "-c",
+						"brightnessctl set 10%-",
+						NULL };
+					execvp("sh", args);
+					_exit(1);
+				}
+				handled = true;
+				break;
+			default:
+				break;
 			}
 		}
 	}
@@ -629,6 +803,11 @@ void seat_pointer_focus_change(struct wl_listener *listener, void *data) {
 	if (event->new_surface == NULL) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
+	if (event->new_surface != event->old_surface) {
+		wlr_log(WLR_INFO, "POINTER_FOCUS: old=%p new=%p kb_focus=%p",
+			(void *)event->old_surface, (void *)event->new_surface,
+			(void *)server->seat->keyboard_state.focused_surface);
+	}
 }
 
 void seat_request_set_selection(struct wl_listener *listener, void *data) {
@@ -637,7 +816,15 @@ void seat_request_set_selection(struct wl_listener *listener, void *data) {
 	 * ignore such requests if they so choose, but in uwm we always honor */
 	struct uwm_server *server = wl_container_of(listener, server, request_set_selection);
 	struct wlr_seat_request_set_selection_event *event = data;
+	wlr_log(WLR_INFO, "SEAT_FOCUS: set_selection serial=%u source=%p",
+		event->serial, (void *)event->source);
 	wlr_seat_set_selection(server->seat, event->source, event->serial);
+}
+
+void seat_request_set_primary_selection(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, request_set_primary_selection);
+	struct wlr_seat_request_set_primary_selection_event *event = data;
+	wlr_seat_set_primary_selection(server->seat, event->source, event->serial);
 }
 
 static void process_cursor_move(struct uwm_server *server) {
@@ -752,15 +939,13 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 
-		struct uwm_workspace *ws = toplevel->workspace;
-		if (ws == &server->workspaces.workspaces[server->workspaces.current]
-				&& ws->focus_follows_pointer) {
-			focus_toplevel(toplevel);
+		if (toplevel) {
+			struct uwm_workspace *ws = toplevel->workspace;
+			if (ws == &server->workspaces.workspaces[server->workspaces.current]
+					&& ws->focus_follows_pointer) {
+				focus_toplevel(toplevel);
+			}
 		}
-	} else {
-		/* Clear pointer focus so future button events and such are not sent to
-		 * the last client to have the cursor over it. */
-		wlr_seat_pointer_clear_focus(seat);
 	}
 }
 
@@ -824,16 +1009,18 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 
 		server->last_button_serial = wlr_seat_pointer_notify_button(
 			server->seat, event->time_msec, event->button, event->state);
+		wlr_seat_pointer_notify_frame(server->seat);
 
 		double sx, sy;
 		struct wlr_surface *surface = NULL;
 		struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
-		if (toplevel)
+		if (toplevel && !toplevel->is_transient)
 			focus_toplevel(toplevel);
 	} else {
 		wlr_seat_pointer_notify_button(server->seat,
 			event->time_msec, event->button, event->state);
+		wlr_seat_pointer_notify_frame(server->seat);
 		reset_cursor_mode(server);
 	}
 }
