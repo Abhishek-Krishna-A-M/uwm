@@ -6,11 +6,21 @@
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include "window.h"
+
+static void set_window_opacity(struct wlr_scene_buffer *buffer,
+		int sx, int sy, void *data)
+{
+	float *opacity = data;
+	wlr_scene_buffer_set_opacity(buffer, *opacity);
+	(void)sx;
+	(void)sy;
+}
 #include "input.h"
 #include "bsp.h"
 #include "floating.h"
 #include "layout.h"
 #include "server.h"
+#include "rules.h"
 
 void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (toplevel == NULL) {
@@ -39,6 +49,15 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		struct wlr_xdg_toplevel *prev_toplevel = wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
 		if (prev_toplevel != NULL) {
 			wlr_xdg_toplevel_set_activated(prev_toplevel, false);
+			struct wlr_scene_tree *prev_tree = prev_toplevel->base->data;
+			if (prev_tree) {
+				struct uwm_toplevel *prev = prev_tree->node.data;
+				if (prev && !prev->fullscreen) {
+					float dim = 0.85f;
+					wlr_scene_node_for_each_buffer(
+						&prev_tree->node, set_window_opacity, &dim);
+				}
+			}
 		}
 	}
 
@@ -78,6 +97,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	}
+	float full = 1.0f;
+	wlr_scene_node_for_each_buffer(
+		&toplevel->scene_tree->node, set_window_opacity, &full);
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
 		wlr_log(WLR_INFO, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
@@ -198,18 +220,24 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	struct uwm_workspace *current = &toplevel->server->workspaces.workspaces[toplevel->server->workspaces.current];
 
-	bsp_insert(toplevel->workspace, toplevel);
+	rule_apply_all(&toplevel->server->config, toplevel);
+
+	if (!toplevel->floating && !toplevel->fullscreen) {
+		bsp_insert(toplevel->workspace, toplevel);
+	}
 
 	int w, h;
 	get_output_size(toplevel->server, &w, &h);
 	bsp_arrange(toplevel->workspace, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
-			|| toplevel->workspace->fullscreen_window) {
+			|| (toplevel->workspace->fullscreen_window
+				&& toplevel->workspace->fullscreen_window != toplevel)) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
 
-	if (!toplevel->workspace->fullscreen_window) {
+	if (!toplevel->workspace->fullscreen_window
+			|| toplevel->workspace->fullscreen_window == toplevel) {
 		focus_toplevel(toplevel);
 	}
 }

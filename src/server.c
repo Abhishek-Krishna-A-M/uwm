@@ -266,6 +266,7 @@ void server_finish(struct uwm_server *server) {
 	layer_shell_destroy(server);
 	idle_inhibit_destroy(server);
 
+	config_finish(&server->config);
 	workspace_manager_finish(&server->workspaces);
 
 	wl_list_remove(&server->new_xdg_toplevel.link);

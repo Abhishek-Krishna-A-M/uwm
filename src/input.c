@@ -156,7 +156,7 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		if (server->workspaces.last != server->workspaces.current)
 			workspace_switch(server, server->workspaces.last);
 		break;
-	case XKB_KEY_h: {
+	case XKB_KEY_h: case XKB_KEY_Left: {
 		if ((modifiers & WLR_MODIFIER_SHIFT) && (modifiers & WLR_MODIFIER_ALT)) {
 			struct uwm_toplevel *focused = current_ws(server)->focused;
 			if (focused && focused->floating) {
@@ -200,7 +200,7 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		}
 		break;
 	}
-	case XKB_KEY_j: {
+	case XKB_KEY_j: case XKB_KEY_Down: {
 		if ((modifiers & WLR_MODIFIER_SHIFT) && (modifiers & WLR_MODIFIER_ALT)) {
 			struct uwm_toplevel *focused = current_ws(server)->focused;
 			if (focused && focused->floating) {
@@ -242,7 +242,7 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		}
 		break;
 	}
-	case XKB_KEY_k: {
+	case XKB_KEY_k: case XKB_KEY_Up: {
 		if ((modifiers & WLR_MODIFIER_SHIFT) && (modifiers & WLR_MODIFIER_ALT)) {
 			struct uwm_toplevel *focused = current_ws(server)->focused;
 			if (focused && focused->floating) {
@@ -286,7 +286,7 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		}
 		break;
 	}
-	case XKB_KEY_l: {
+	case XKB_KEY_l: case XKB_KEY_Right: {
 		if ((modifiers & WLR_MODIFIER_SHIFT) && (modifiers & WLR_MODIFIER_ALT)) {
 			struct uwm_toplevel *focused = current_ws(server)->focused;
 			if (focused && focused->floating) {
@@ -469,23 +469,32 @@ static bool handle_keybinding(struct uwm_server *server, xkb_keysym_t sym, uint3
 		bool is_num = false;
 		switch (sym) {
 		case XKB_KEY_1: case XKB_KEY_exclam:
+		case XKB_KEY_KP_1:
 			ws = 0; is_num = true; break;
 		case XKB_KEY_2: case XKB_KEY_at: case XKB_KEY_quotedbl:
+		case XKB_KEY_KP_2:
 			ws = 1; is_num = true; break;
 		case XKB_KEY_3: case XKB_KEY_numbersign:
 		case XKB_KEY_sterling: case XKB_KEY_section:
+		case XKB_KEY_KP_3:
 			ws = 2; is_num = true; break;
 		case XKB_KEY_4: case XKB_KEY_dollar:
+		case XKB_KEY_KP_4:
 			ws = 3; is_num = true; break;
 		case XKB_KEY_5: case XKB_KEY_percent:
+		case XKB_KEY_KP_5:
 			ws = 4; is_num = true; break;
 		case XKB_KEY_6: case XKB_KEY_asciicircum:
+		case XKB_KEY_KP_6:
 			ws = 5; is_num = true; break;
 		case XKB_KEY_7: case XKB_KEY_ampersand: case XKB_KEY_slash:
+		case XKB_KEY_KP_7:
 			ws = 6; is_num = true; break;
 		case XKB_KEY_8: case XKB_KEY_asterisk: case XKB_KEY_parenleft:
+		case XKB_KEY_KP_8:
 			ws = 7; is_num = true; break;
 		case XKB_KEY_9: case XKB_KEY_parenright:
+		case XKB_KEY_KP_9:
 			ws = 8; is_num = true; break;
 		}
 		if (is_num) {

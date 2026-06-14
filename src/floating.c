@@ -30,7 +30,7 @@ void toggle_floating(struct uwm_toplevel *window)
 		return;
 
 	if (!window->floating) {
-		int float_w = (int)(out_w * 0.75f);
+		int float_w = (int)(out_w * 0.60f);
 		int float_h = (int)(out_h * 0.75f);
 		if (float_w < 200) float_w = 200;
 		if (float_h < 150) float_h = 150;
