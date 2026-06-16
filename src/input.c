@@ -374,7 +374,11 @@ static bool handle_keybinding(
 		if (required & WLR_MODIFIER_LOGO)  binding_mask |= logo;
 		if (required & WLR_MODIFIER_SHIFT) binding_mask |= shift;
 
-		if ((modifiers & binding_mask) == binding_mask) {
+		/* Require an exact match on significant modifiers (ctrl/alt/logo/shift).
+		 * Without this, Mod+Shift+1 would match the workspace binding (which
+		 * only needs MOD) before movetows (MOD|SHIFT) gets checked. */
+		xkb_mod_mask_t significant = ctrl | alt | logo | shift;
+		if ((modifiers & significant) == binding_mask) {
 			karr[i].func(&karr[i].arg);
 			return true;
 		}
@@ -430,8 +434,15 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
 	/* libinput keycode -> xkbcommon */
 	uint32_t keycode = event->keycode + 8;
+
+	/* Use level-0 (unmodified) keysyms for keybinding matching.
+	 * The modifier state is checked separately, so Mod+Shift+1
+	 * (which composes to XKB_KEY_exclam) correctly matches a
+	 * binding that specifies XKB_KEY_1. */
+	struct xkb_keymap *keymap = keyboard->wlr_keyboard->keymap;
 	const xkb_keysym_t *syms;
-	int nsyms = xkb_state_key_get_syms(keyboard->wlr_keyboard->xkb_state, keycode, &syms);
+	int nsyms = xkb_keymap_key_get_syms_by_level(
+		keymap, keycode, 0, 0, &syms);
 	xkb_keysym_t syms_copy[32];
 	int nsyms_copy = nsyms > 32 ? 32 : nsyms;
 	for (int i = 0; i < nsyms_copy; i++)
@@ -442,7 +453,6 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 
 	/* Resolve actual modifier indices from the XKB keymap */
-	struct xkb_keymap *keymap = keyboard->wlr_keyboard->keymap;
 	xkb_mod_mask_t ctrl_mask = 0, alt_mask = 0, logo_mask = 0;
 	xkb_mod_index_t idx;
 	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CTRL);

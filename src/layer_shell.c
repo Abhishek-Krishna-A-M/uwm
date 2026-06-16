@@ -377,7 +377,7 @@ static void layer_shell_handle_new_layer_surface(struct wl_listener *listener, v
 
 bool layer_shell_create(struct uwm_server *server) {
 	server->layer_shell.layer_shell = wlr_layer_shell_v1_create(
-		server->wl_display, 3);
+		server->wl_display, 5);
 	if (!server->layer_shell.layer_shell) {
 		wlr_log(WLR_ERROR, "Failed to create layer shell");
 		return false;
