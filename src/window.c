@@ -5,6 +5,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include "window.h"
 
 static void set_window_opacity(struct wlr_scene_buffer *buffer,
@@ -182,6 +183,12 @@ struct uwm_toplevel *desktop_toplevel_at(
 bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 	struct wlr_xdg_toplevel *xdt = toplevel->xdg_toplevel;
 
+	/* Dialogs (windows with a parent toplevel) should not be tiled.
+	 * This includes browser share-picker dialogs, file dialogs, etc. */
+	if (xdt->parent) {
+		return false;
+	}
+
 	/* Transient helpers (clipboard managers, portals, etc.) create a
 	 * toplevel, do their work, and exit within a single event loop.
 	 * At map time they have not set any size constraints, so all four
@@ -208,6 +215,19 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 	wl_list_insert(&toplevel->workspace->toplevels, &toplevel->workspace_link);
+
+	/* Create foreign toplevel handle for screen sharing portal integration.
+	 * This advertises the window to xdg-desktop-portal-wlr so clients can
+	 * select it for per-window capture. */
+	if (toplevel->server->foreign_toplevel_list) {
+		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
+			.title = toplevel->xdg_toplevel->title,
+			.app_id = toplevel->xdg_toplevel->app_id,
+		};
+		toplevel->ext_foreign_toplevel =
+			wlr_ext_foreign_toplevel_handle_v1_create(
+				toplevel->server->foreign_toplevel_list, &state);
+	}
 
 	/* Mark transient helpers at map time. The flag is permanent —
 	 * should_tile_toplevel() can give different results later once the
@@ -245,6 +265,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
+
+	/* Destroy foreign toplevel handle before removing from lists */
+	if (toplevel->ext_foreign_toplevel) {
+		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
+		toplevel->ext_foreign_toplevel = NULL;
+	}
 
 	const char *app_id = toplevel->xdg_toplevel->app_id;
 	const char *title = toplevel->xdg_toplevel->title;
@@ -356,11 +382,29 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		}
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
+
+	/* Update foreign toplevel handle if title or app_id changed.
+	 * This ensures xdg-desktop-portal-wlr sees current window metadata
+	 * for per-window screen sharing selection. */
+	if (toplevel->ext_foreign_toplevel) {
+		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
+			.title = toplevel->xdg_toplevel->title,
+			.app_id = toplevel->xdg_toplevel->app_id,
+		};
+		wlr_ext_foreign_toplevel_handle_v1_update_state(
+			toplevel->ext_foreign_toplevel, &state);
+	}
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	/* Called when the xdg_toplevel is destroyed. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, destroy);
+
+	/* Destroy foreign toplevel handle if still alive */
+	if (toplevel->ext_foreign_toplevel) {
+		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
+		toplevel->ext_foreign_toplevel = NULL;
+	}
 
 	wl_list_remove(&toplevel->map.link);
 	wl_list_remove(&toplevel->unmap.link);

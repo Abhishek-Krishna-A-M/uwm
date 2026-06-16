@@ -29,6 +29,43 @@ static int handle_scene_dump_timer(void *data) {
 	return 0;
 }
 
+static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, new_foreign_toplevel_capture_request);
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;
+
+	struct uwm_toplevel *toplevel;
+	wl_list_for_each(toplevel, &server->toplevels, link) {
+		if (toplevel->ext_foreign_toplevel == request->toplevel_handle) {
+			struct wlr_ext_image_capture_source_v1 *source =
+				wlr_ext_image_capture_source_v1_create_with_scene_node(
+					&toplevel->scene_tree->node,
+					wl_display_get_event_loop(server->wl_display),
+					server->allocator,
+					server->renderer);
+			if (source) {
+				wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+					request, source);
+			} else {
+				wlr_log(WLR_ERROR, "Failed to create capture source for toplevel");
+			}
+			return;
+		}
+	}
+
+	wlr_log(WLR_ERROR, "Foreign toplevel capture request for unknown handle");
+}
+
+static void handle_new_capture_session(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, new_capture_session);
+	struct wlr_ext_image_copy_capture_session_v1 *session = data;
+	wlr_log(WLR_INFO, "New ext-image-copy-capture session created for source %p",
+		(void *)session->source);
+	struct uwm_output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		wlr_output_schedule_frame(output->wlr_output);
+	}
+}
+
 static void handle_transient_seat_create(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, transient_seat_create);
 	struct wlr_transient_seat_v1 *transient_seat = data;
@@ -292,6 +329,12 @@ bool server_init(struct uwm_server *server) {
 		layer_shell_destroy(server);
 		return false;
 	}
+
+	/* Initialize ext-image-copy-capture protocol for per-window screen sharing.
+	 * This is the modern replacement for wlr-screencopy, used by
+	 * xdg-desktop-portal-wlr for window-level capture. Output capture
+	 * uses the legacy screencopy path as primary (more reliable in
+	 * wlroots 0.20.1), but per-window capture requires this protocol. */
 	server->ext_image_copy_capture_manager =
 		wlr_ext_image_copy_capture_manager_v1_create(server->wl_display, 1);
 	if (!server->ext_image_copy_capture_manager) {
@@ -300,6 +343,9 @@ bool server_init(struct uwm_server *server) {
 		layer_shell_destroy(server);
 		return false;
 	}
+	server->new_capture_session.notify = handle_new_capture_session;
+	wl_signal_add(&server->ext_image_copy_capture_manager->events.new_session,
+		&server->new_capture_session);
 
 	/* Schedule a delayed scene tree dump for diagnostics */
 	struct wl_event_loop *evloop = wl_display_get_event_loop(server->wl_display);
@@ -317,6 +363,36 @@ bool server_init(struct uwm_server *server) {
 		idle_inhibit_destroy(server);
 		layer_shell_destroy(server);
 		return false;
+	}
+
+	/* Output capture source manager — lets portal/clients select a specific
+	 * output to capture. Required for xdg-desktop-portal-wlr monitor selection. */
+	server->output_capture_source_manager =
+		wlr_ext_output_image_capture_source_manager_v1_create(server->wl_display, 1);
+	if (!server->output_capture_source_manager) {
+		wlr_log(WLR_ERROR, "Failed to create ext output image capture source manager");
+	}
+
+	/* Foreign toplevel list — advertises windows to portal/clients so they
+	 * can select a specific window to capture. Required for window sharing. */
+	server->foreign_toplevel_list =
+		wlr_ext_foreign_toplevel_list_v1_create(server->wl_display, 1);
+	if (!server->foreign_toplevel_list) {
+		wlr_log(WLR_ERROR, "Failed to create ext foreign toplevel list");
+	}
+
+	/* Foreign toplevel image capture source — lets portal/clients select a
+	 * specific window for per-window screen sharing. */
+	server->foreign_toplevel_capture_source_manager =
+		wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(server->wl_display, 1);
+	if (server->foreign_toplevel_capture_source_manager) {
+		server->new_foreign_toplevel_capture_request.notify =
+			handle_new_foreign_toplevel_capture_request;
+		wl_signal_add(
+			&server->foreign_toplevel_capture_source_manager->events.new_request,
+			&server->new_foreign_toplevel_capture_request);
+	} else {
+		wlr_log(WLR_ERROR, "Failed to create ext foreign toplevel image capture source manager");
 	}
 
 	return true;
@@ -340,6 +416,12 @@ void server_finish(struct uwm_server *server) {
 	}
 	if (server->transient_seat_manager) {
 		wl_list_remove(&server->transient_seat_create.link);
+	}
+	if (server->foreign_toplevel_capture_source_manager) {
+		wl_list_remove(&server->new_foreign_toplevel_capture_request.link);
+	}
+	if (server->ext_image_copy_capture_manager) {
+		wl_list_remove(&server->new_capture_session.link);
 	}
 
 	wl_list_remove(&server->cursor_motion.link);

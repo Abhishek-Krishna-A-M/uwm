@@ -24,7 +24,7 @@
 #define MOD WLR_MODIFIER_LOGO
 
 /* spawnable command argv arrays (NULL-terminated) */
-#define TERM        "foot", NULL
+#define TERM        "footclient", NULL
 #define LAUNCHER    "fuzzel", "--no-icons", "--prompt=\xef\x8c\xbb Apps: ", NULL
 #define RUN         "sh", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
@@ -144,6 +144,7 @@
 #define AUTOSTART \
 	"pipewire", \
 	"wireplumber", \
+	"foot --server", \
 	"mako", \
 	"waybar", \
 	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \

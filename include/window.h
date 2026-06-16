@@ -5,6 +5,7 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include "server.h"
 
 struct uwm_toplevel {
@@ -44,6 +45,8 @@ struct uwm_toplevel {
 
 	struct wl_listener decoration_destroy;
 	struct wl_listener decoration_request_mode;
+
+	struct wlr_ext_foreign_toplevel_handle_v1 *ext_foreign_toplevel;
 };
 
 struct uwm_popup {

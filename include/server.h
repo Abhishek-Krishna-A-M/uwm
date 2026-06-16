@@ -17,6 +17,8 @@
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_ext_image_copy_capture_v1.h>
+#include <wlr/types/wlr_ext_image_capture_source_v1.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
@@ -95,6 +97,11 @@ struct uwm_server {
 	/* Screencopy & screen sharing support */
 	struct wlr_screencopy_manager_v1 *screencopy_manager;
 	struct wlr_ext_image_copy_capture_manager_v1 *ext_image_copy_capture_manager;
+	struct wlr_ext_output_image_capture_source_manager_v1 *output_capture_source_manager;
+	struct wlr_ext_foreign_toplevel_list_v1 *foreign_toplevel_list;
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1 *foreign_toplevel_capture_source_manager;
+	struct wl_listener new_foreign_toplevel_capture_request;
+	struct wl_listener new_capture_session;
 	struct wlr_export_dmabuf_manager_v1 *export_dmabuf_manager;
 	struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1;
 
