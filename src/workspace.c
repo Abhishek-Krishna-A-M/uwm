@@ -191,10 +191,10 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		new_ws->focused = toplevel;
 	}
 
-	int area_w, area_h;
-	get_output_size(toplevel->server, &area_w, &area_h);
-	bsp_arrange(old_ws, area_w, area_h, toplevel->server->config.inner_gap);
-	bsp_arrange(new_ws, area_w, area_h, toplevel->server->config.inner_gap);
+	int area_x, area_y, area_w, area_h;
+	get_output_size(toplevel->server, &area_x, &area_y, &area_w, &area_h);
+	bsp_arrange(old_ws, area_x, area_y, area_w, area_h, toplevel->server->config.inner_gap);
+	bsp_arrange(new_ws, area_x, area_y, area_w, area_h, toplevel->server->config.inner_gap);
 }
 
 void workspace_cycle_next(struct uwm_server *server)
@@ -234,9 +234,9 @@ void workspace_cycle_next(struct uwm_server *server)
 	focus_toplevel(windows[next]);
 
 	if (ws->monocle) {
-		int out_w, out_h;
-		get_output_size(server, &out_w, &out_h);
-		bsp_arrange(ws, out_w, out_h, server->config.inner_gap);
+		int x, y, out_w, out_h;
+		get_output_size(server, &x, &y, &out_w, &out_h);
+		bsp_arrange(ws, x, y, out_w, out_h, server->config.inner_gap);
 	}
 }
 

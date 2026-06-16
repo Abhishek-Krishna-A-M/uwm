@@ -46,7 +46,7 @@ void bsp_restore(
 
 void bsp_arrange(
 	struct uwm_workspace *workspace,
-	int width, int height, int gap);
+	int x, int y, int width, int height, int gap);
 
 void bsp_destroy(
 	struct uwm_bsp_node *node);
@@ -95,6 +95,6 @@ void bsp_arrange_workspace(
 
 void get_output_size(
 	struct uwm_server *server,
-	int *width, int *height);
+	int *x, int *y, int *width, int *height);
 
 #endif

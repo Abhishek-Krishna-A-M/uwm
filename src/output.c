@@ -1,16 +1,68 @@
 #include <stdlib.h>
 #include <time.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_scene.h>
-#include "output.h"
+#include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/util/log.h>
 #include "layer_shell.h"
+#include "output.h"
 #include "bsp.h"
+#include "window.h"
 #include "workspace.h"
+
+static void scene_node_dump(struct wlr_scene_node *node, int depth) {
+	char indent[128];
+	int i;
+	for (i = 0; i < depth && i < (int)sizeof(indent) - 2; i++)
+		indent[i] = ' ';
+	indent[i] = '\0';
+
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		wlr_log(WLR_INFO, "%sTREE x=%d y=%d en=%d data=%s",
+			indent, node->x, node->y, node->enabled,
+			node->data ? "SET" : "NULL");
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link)
+			scene_node_dump(child, depth + 1);
+	} else {
+		struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+		struct wlr_scene_surface *sf = wlr_scene_surface_try_from_buffer(buf);
+		const char *surface_type = "";
+		if (sf && sf->surface) {
+			if (wlr_layer_surface_v1_try_from_wlr_surface(sf->surface))
+				surface_type = " LYR";
+			else if (wlr_xdg_surface_try_from_wlr_surface(sf->surface))
+				surface_type = " XDG";
+		}
+		wlr_log(WLR_INFO, "%sBUF x=%d y=%d en=%d%s",
+			indent, node->x, node->y, node->enabled, surface_type);
+	}
+}
+
+static void scene_tree_dump(struct uwm_server *server) {
+	wlr_log(WLR_INFO, "=== SCENE TREE DUMP ===");
+	scene_node_dump(&server->scene->tree.node, 0);
+	wlr_log(WLR_INFO, "=== END SCENE TREE DUMP ===");
+}
+
+static int scene_dumped = 0;
+
+void scene_dump_delayed(struct uwm_server *server) {
+	scene_tree_dump(server);
+}
 
 static void output_frame(struct wl_listener *listener, void *data) {
 	/* This function is called every time an output is ready to display a frame,
 	 * generally at the output's refresh rate (e.g. 60Hz). */
 	struct uwm_output *output = wl_container_of(listener, output, frame);
-	struct wlr_scene *scene = output->server->scene;
+	struct uwm_server *server = output->server;
+	struct wlr_scene *scene = server->scene;
+
+	if (!scene_dumped) {
+		scene_dumped = 1;
+		scene_tree_dump(server);
+	}
 
 	struct wlr_scene_output *scene_output = wlr_scene_get_scene_output(scene, output->wlr_output);
 
@@ -37,9 +89,9 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
 		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
 		if (ws->root) {
-			int w, h;
-			get_output_size(server, &w, &h);
-			bsp_arrange(ws, w, h, server->config.inner_gap);
+			int x, y, w, h;
+			get_output_size(server, &x, &y, &w, &h);
+			bsp_arrange(ws, x, y, w, h, server->config.inner_gap);
 		}
 	}
 }
@@ -60,9 +112,9 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
 		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
 		if (ws->root) {
-			int w, h;
-			get_output_size(server, &w, &h);
-			bsp_arrange(ws, w, h, server->config.inner_gap);
+			int x, y, w, h;
+			get_output_size(server, &x, &y, &w, &h);
+			bsp_arrange(ws, x, y, w, h, server->config.inner_gap);
 		}
 	}
 
@@ -103,18 +155,18 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->wlr_output = wlr_output;
 	output->server = server;
 
-	/* Create per-output layer trees in bottom-to-top order.
-	 * Position them relative to the global tiled_layer and floating_layer:
-	 * tiled_layer -> layer_background -> layer_bottom -> [output layout] ->
-	 * layer_floating -> floating_layer -> layer_top -> layer_overlay */
+	/* Create per-output layer trees.
+	 * Final z-order (bottom to top):
+	 * layer_background -> layer_bottom -> tiled_layer ->
+	 * floating_layer -> scene_layout (windows) -> layer_top -> layer_overlay */
 	output->layer_background = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_bottom = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_floating = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_top = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_overlay = wlr_scene_tree_create(&server->scene->tree);
 
-	/* Position layer_background after tiled_layer */
-	wlr_scene_node_place_above(&output->layer_background->node,
+	/* Position layer_background before tiled_layer (behind windows) */
+	wlr_scene_node_place_below(&output->layer_background->node,
 		&server->tiled_layer->node);
 	/* Position layer_bottom after layer_background */
 	wlr_scene_node_place_above(&output->layer_bottom->node,

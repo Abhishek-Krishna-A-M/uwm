@@ -53,7 +53,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			if (prev_tree) {
 				struct uwm_toplevel *prev = prev_tree->node.data;
 				if (prev && !prev->fullscreen) {
-					float dim = 0.85f;
+					float dim = unfocus_dim;
 					wlr_scene_node_for_each_buffer(
 						&prev_tree->node, set_window_opacity, &dim);
 				}
@@ -79,9 +79,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 
 	/* Update display for workspace-level monocle */
 	if (ws->monocle) {
-		int out_w, out_h;
-		get_output_size(server, &out_w, &out_h);
-		bsp_arrange(ws, out_w, out_h, server->config.inner_gap);
+		int x, y, out_w, out_h;
+		get_output_size(server, &x, &y, &out_w, &out_h);
+		bsp_arrange(ws, x, y, out_w, out_h, server->config.inner_gap);
 	}
 
 	if (toplevel->floating) {
@@ -226,9 +226,9 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		bsp_insert(toplevel->workspace, toplevel);
 	}
 
-	int w, h;
-	get_output_size(toplevel->server, &w, &h);
-	bsp_arrange(toplevel->workspace, w, h, toplevel->server->config.inner_gap);
+	int x, y, w, h;
+	get_output_size(toplevel->server, &x, &y, &w, &h);
+	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
 			|| (toplevel->workspace->fullscreen_window
@@ -265,9 +265,9 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	bsp_remove(toplevel->workspace, toplevel);
 
-	int w, h;
-	get_output_size(toplevel->server, &w, &h);
-	bsp_arrange(toplevel->workspace, w, h, toplevel->server->config.inner_gap);
+	int x, y, w, h;
+	get_output_size(toplevel->server, &x, &y, &w, &h);
+	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	struct uwm_workspace *ws = toplevel->workspace;
 	if (ws->last_focused == toplevel)
@@ -294,7 +294,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		ws->monocle = false;
 		if (ws->root) {
 			set_children_visible(ws->root, true);
-			bsp_arrange(ws, w, h, toplevel->server->config.inner_gap);
+			bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
 		}
 	}
 

@@ -1,19 +1,8 @@
 #!/bin/sh
-# UWM startup script
-# Launch session services before starting the compositor
+# UWM launcher — session creation only.
+# Display-dependent services: config.def.h AUTOSTART
+# Session daemons (pipewire, portals): user service manager
 
-# Start PipeWire audio
-pipewire &
-wireplumber &
+export XDG_CURRENT_DESKTOP=wlroots
 
-# Start notification daemon
-mako &
-
-# Set wallpaper
-swaybg -i ~/Pictures/artix-wallpaper.png &
-
-# Start status bar
-uwm-bar &
-
-# Start compositor
-exec uwm
+exec dbus-run-session ./uwm

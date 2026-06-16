@@ -70,12 +70,16 @@ void layer_surface_arrange(struct uwm_output *output) {
 	arrange_surface(output, &full_area, &usable_area, output->layer_bottom, false);
 	arrange_surface(output, &full_area, &usable_area, output->layer_background, false);
 
+	/* Store usable area for window arrangement */
+	output->usable_area = usable_area;
+
 	/* Rearrange tiled windows if usable area changed */
 	struct uwm_server *server = output->server;
 	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
 		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
 		if (ws->root) {
-			bsp_arrange(ws, usable_area.width, usable_area.height,
+			bsp_arrange(ws, usable_area.x, usable_area.y,
+				usable_area.width, usable_area.height,
 				server->config.inner_gap);
 		}
 	}

@@ -7,8 +7,7 @@
 
 struct uwm_toplevel;
 
-#define UWM_WORKSPACE_COUNT 9
-
+#include "config.h"
 #include "bsp.h"
 
 struct uwm_workspace{
