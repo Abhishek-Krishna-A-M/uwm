@@ -5,7 +5,7 @@ CFLAGS_PKG_CONFIG!=$(PKG_CONFIG) --cflags $(PKGS)
 
 # Append dynamic pkg-config flags and your static project flags
 CFLAGS+=$(CFLAGS_PKG_CONFIG)
-CFLAGS+=-g -Werror -I. -Iinclude -Iprotocol -DWLR_USE_UNSTABLE -fsanitize=address -fno-omit-frame-pointer
+CFLAGS+=-g -Werror -Iinclude -I. -Iprotocol -DWLR_USE_UNSTABLE -fsanitize=address -fno-omit-frame-pointer
 LDFLAGS+=-fsanitize=address
 
 LIBS!=$(PKG_CONFIG) --libs $(PKGS)
@@ -22,7 +22,14 @@ PROTO_OBJ = $(PROTO_SRC:.c=.o)
 XDG_PROTO_OBJ = xdg-shell-protocol.o
 
 
-all: uwm
+all: config.h uwm
+
+# Auto-create config.h from config.def.h if it doesn't exist
+config.h: config.def.h
+	cp config.def.h config.h
+
+# All source files depend on config.h (type definitions + externs)
+$(OBJ): config.h
 
 # Pattern rule for all object files
 output/%.o: src/%.c
@@ -41,4 +48,8 @@ uwm: $(OBJ) $(PROTO_OBJ) $(XDG_PROTO_OBJ)
 clean:
 	rm -rf uwm output/
 
-.PHONY: all clean
+# Remove config.h as well (user customizations will be lost)
+distclean: clean
+	rm -f config.h
+
+.PHONY: all clean distclean

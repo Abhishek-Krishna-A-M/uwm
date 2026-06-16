@@ -17,6 +17,24 @@
 #include "layer_shell.h"
 #include "idle_inhibit.h"
 
+static int handle_term_signal(int signo, void *data) {
+	struct uwm_server *server = data;
+	wlr_log(WLR_INFO, "Received signal %d, terminating compositor", signo);
+	wl_display_terminate(server->wl_display);
+	return 0;
+}
+
+static int handle_scene_dump_timer(void *data) {
+	scene_dump_delayed((struct uwm_server *)data);
+	return 0;
+}
+
+static void handle_renderer_lost(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, renderer_lost);
+	wlr_log(WLR_ERROR, "Renderer lost (GPU may have been reset). Terminating.");
+	wl_display_terminate(server->wl_display);
+}
+
 static void handle_transient_seat_create(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, transient_seat_create);
 	struct wlr_transient_seat_v1 *transient_seat = data;
@@ -33,7 +51,14 @@ static void handle_transient_seat_create(struct wl_listener *listener, void *dat
 }
 
 bool server_init(struct uwm_server *server) {
-	signal(SIGCHLD, SIG_IGN);
+	/* Set up signal handling with SA_RESTART to prevent signals from
+	 * interrupting blocking syscalls (crucial during VT switch).
+	 * SIGCHLD: prevent zombie processes from fork() calls.
+	 * SIGPIPE: prevent broken pipes (e.g. from PipeWire dying on VT switch)
+	 *          from killing the compositor. */
+	struct sigaction sa_ign = { .sa_handler = SIG_IGN, .sa_flags = SA_RESTART };
+	sigaction(SIGCHLD, &sa_ign, NULL);
+	sigaction(SIGPIPE, &sa_ign, NULL);
 	config_load(&server->config);
 
 	/* The Wayland display is managed by libwayland. It handles accepting
@@ -67,7 +92,16 @@ bool server_init(struct uwm_server *server) {
 		return false;
 	}
 
-	wlr_renderer_init_wl_display(server->renderer, server->wl_display);
+	/* Initialize wl_shm only (not init_wl_display, which would also create
+	 * a linux-dmabuf global without scene feedback). We create the single
+	 * linux-dmabuf ourselves later and wire it to the scene so that
+	 * xdg-desktop-portal-wlr gets proper DMA-BUF format/modifier info for
+	 * screen capture. */
+	wlr_renderer_init_wl_shm(server->renderer, server->wl_display);
+
+	/* Listen for renderer loss (GPU reset, VT switch context loss) */
+	server->renderer_lost.notify = handle_renderer_lost;
+	wl_signal_add(&server->renderer->events.lost, &server->renderer_lost);
 
 	/* Autocreates an allocator for us.
 	 * The allocator is the bridge between the renderer and the backend. It
@@ -103,6 +137,12 @@ bool server_init(struct uwm_server *server) {
 			&server->transient_seat_create);
 	}
 
+	/* Handle SIGTERM/SIGINT via the Wayland event loop so we can
+	 * cleanly shut down (destroy clients, release DRM master, etc.) */
+	struct wl_event_loop *loop = wl_display_get_event_loop(server->wl_display);
+	wl_event_loop_add_signal(loop, SIGTERM, handle_term_signal, server);
+	wl_event_loop_add_signal(loop, SIGINT, handle_term_signal, server);
+
 	/* Creates an output layout, which a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
 	server->output_layout = wlr_output_layout_create(server->wl_display);
@@ -120,16 +160,32 @@ bool server_init(struct uwm_server *server) {
 	 * necessary.
 	 */
 	server->scene = wlr_scene_create();
-	/* Scene graph order (bottom to top):
-	 * tiled_layer -> layer_bottom -> layer_background -> [output layout] ->
-	 * layer_floating -> floating_layer -> layer_top -> layer_overlay
+	/* Scene graph z-order (bottom to top):
+	 * [tiled_layer] -> [floating_layer] -> [output layout (windows)] ->
+	 * layer_top -> layer_overlay
 	 *
-	 * Per-output layer trees are created in server_new_output().
-	 * tiled_layer and floating_layer are placeholders that output layer trees
-	 * are positioned between. */
+	 * scene_layout (output layout) is created first, then tiled/floating
+	 * layers are raised above it. Per-output layer trees (background,
+	 * bottom, top, overlay) are created and positioned in server_new_output(). */
+	server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
 	server->tiled_layer = wlr_scene_tree_create(&server->scene->tree);
 	server->floating_layer = wlr_scene_tree_create(&server->scene->tree);
-	server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
+
+	/* Raise tiled and floating layers above scene_layout so windows
+	 * render on top of the output layout's background content */
+	wlr_scene_node_raise_to_top(&server->tiled_layer->node);
+	wlr_scene_node_raise_to_top(&server->floating_layer->node);
+
+	/* Create the linux-dmabuf protocol and wire it to the scene graph.
+	 * This single global (v5, with scene feedback) is what
+	 * xdg-desktop-portal-wlr needs for PipeWire-based screen capture.
+	 * Must be called after scene creation — the scene must exist before
+	 * we can wire the dmabuf feedback to it. */
+	if (wlr_renderer_get_texture_formats(server->renderer, WLR_BUFFER_CAP_DMABUF)) {
+		server->linux_dmabuf_v1 = wlr_linux_dmabuf_v1_create_with_renderer(
+			server->wl_display, 5, server->renderer);
+		wlr_scene_set_linux_dmabuf_v1(server->scene, server->linux_dmabuf_v1);
+	}
 
 	/* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
 	 * used for application windows. For more detail on shells, refer to
@@ -255,6 +311,24 @@ bool server_init(struct uwm_server *server) {
 		return false;
 	}
 
+	/* Schedule a delayed scene tree dump for diagnostics */
+	struct wl_event_loop *evloop = wl_display_get_event_loop(server->wl_display);
+	struct wl_event_source *dump_timer = wl_event_loop_add_timer(evloop,
+		handle_scene_dump_timer, server);
+	if (dump_timer) {
+		wl_event_source_timer_update(dump_timer, 3000);
+	}
+
+	/* Initialize export-dmabuf protocol for direct DMA-BUF export.
+	 * Used by capture tools and OBS for zero-copy frame access. */
+	server->export_dmabuf_manager = wlr_export_dmabuf_manager_v1_create(server->wl_display);
+	if (!server->export_dmabuf_manager) {
+		wlr_log(WLR_ERROR, "Failed to create export dmabuf manager");
+		idle_inhibit_destroy(server);
+		layer_shell_destroy(server);
+		return false;
+	}
+
 	return true;
 }
 
@@ -292,11 +366,16 @@ void server_finish(struct uwm_server *server) {
 
 	wl_list_remove(&server->new_output.link);
 
+	wl_list_remove(&server->renderer_lost.link);
+
 	wlr_scene_node_destroy(&server->scene->tree.node);
 	wlr_xcursor_manager_destroy(server->cursor_mgr);
 	wlr_cursor_destroy(server->cursor);
 	wlr_allocator_destroy(server->allocator);
 	wlr_renderer_destroy(server->renderer);
 	wlr_backend_destroy(server->backend);
+	if (server->session) {
+		wlr_session_destroy(server->session);
+	}
 	wl_display_destroy(server->wl_display);
 }

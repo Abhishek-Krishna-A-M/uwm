@@ -104,3 +104,6 @@ vgcore.*
 .env
 .env.local
 
+# User configuration override
+config.h
+

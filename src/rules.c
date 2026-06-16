@@ -80,15 +80,15 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 	}
 
 	if (rule->set_floating && !toplevel->floating) {
-		int out_w, out_h;
-		get_output_size(toplevel->server, &out_w, &out_h);
+		int out_x, out_y, out_w, out_h;
+		get_output_size(toplevel->server, &out_x, &out_y, &out_w, &out_h);
 
-		toplevel->float_width = (int)(out_w * 0.60f);
-		toplevel->float_height = (int)(out_h * 0.75f);
-		if (toplevel->float_width < 200)
-			toplevel->float_width = 200;
-		if (toplevel->float_height < 150)
-			toplevel->float_height = 150;
+		toplevel->float_width = (int)(out_w * floating_default_width_ratio);
+		toplevel->float_height = (int)(out_h * floating_default_height_ratio);
+		if (toplevel->float_width < floating_create_min_width)
+			toplevel->float_width = floating_create_min_width;
+		if (toplevel->float_height < floating_create_min_height)
+			toplevel->float_height = floating_create_min_height;
 		toplevel->float_x = (out_w - toplevel->float_width) / 2;
 		toplevel->float_y = (out_h - toplevel->float_height) / 2;
 

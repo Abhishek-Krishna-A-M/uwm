@@ -6,7 +6,9 @@
 #include "bsp.h"
 #include "window.h"
 #include "workspace.h"
+#include "output.h"
 #include "server.h"
+#include "config.h"
 
 void raise_floating(struct uwm_toplevel *window)
 {
@@ -23,17 +25,17 @@ void toggle_floating(struct uwm_toplevel *window)
 	if (!window)
 		return;
 	struct uwm_workspace *ws = window->workspace;
-	int out_w, out_h;
-	get_output_size(window->server, &out_w, &out_h);
+	int out_x, out_y, out_w, out_h;
+	get_output_size(window->server, &out_x, &out_y, &out_w, &out_h);
 
 	if (window->fullscreen)
 		return;
 
 	if (!window->floating) {
-		int float_w = (int)(out_w * 0.60f);
-		int float_h = (int)(out_h * 0.75f);
-		if (float_w < 200) float_w = 200;
-		if (float_h < 150) float_h = 150;
+		int float_w = (int)(out_w * floating_default_width_ratio);
+		int float_h = (int)(out_h * floating_default_height_ratio);
+		if (float_w < floating_create_min_width) float_w = floating_create_min_width;
+		if (float_h < floating_create_min_height) float_h = floating_create_min_height;
 		window->float_width = float_w;
 		window->float_height = float_h;
 		window->float_x = (out_w - float_w) / 2;
@@ -87,7 +89,7 @@ void toggle_floating(struct uwm_toplevel *window)
 		bsp_restore(ws, window);
 	}
 
-	bsp_arrange(ws, out_w, out_h, window->server->config.inner_gap);
+	bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
 
 	if (ws->focused == window)
 		focus_toplevel(window);
@@ -98,8 +100,8 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 	if (!window)
 		return;
 	struct uwm_workspace *ws = window->workspace;
-	int out_w, out_h;
-	get_output_size(window->server, &out_w, &out_h);
+	int out_x, out_y, out_w, out_h;
+	get_output_size(window->server, &out_x, &out_y, &out_w, &out_h);
 
 	if (!window->fullscreen) {
 		window->saved_floating = window->floating;
@@ -141,6 +143,12 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 			if (tl != window)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
+		/* Hide layer shell surfaces (bar, notifications) in fullscreen */
+		struct uwm_output *output;
+		wl_list_for_each(output, &window->server->outputs, link) {
+			wlr_scene_node_set_enabled(&output->layer_top->node, false);
+			wlr_scene_node_set_enabled(&output->layer_overlay->node, false);
+		}
 		wlr_scene_node_raise_to_top(&window->scene_tree->node);
 
 	} else {
@@ -153,6 +161,12 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		}
 		wl_list_for_each_safe(tl, tmp, &ws->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+		}
+		/* Restore layer shell surfaces after exiting fullscreen */
+		struct uwm_output *output;
+		wl_list_for_each(output, &window->server->outputs, link) {
+			wlr_scene_node_set_enabled(&output->layer_top->node, true);
+			wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
 		}
 
 		if (window->saved_floating) {
@@ -177,7 +191,7 @@ wlr_scene_node_reparent(
 				window->server->tiled_layer);
 		}
 
-		bsp_arrange(ws, out_w, out_h, window->server->config.inner_gap);
+	bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
 
 		if (ws->focused == window)
 			focus_toplevel(window);

@@ -6,6 +6,7 @@
 #include "workspace.h"
 #include "window.h"
 #include "server.h"
+#include "output.h"
 #include "layout.h"
 
 static struct uwm_bsp_node *bsp_node_create(struct uwm_toplevel *toplevel)
@@ -185,7 +186,7 @@ static void bsp_arrange_node(
 	}
 }
 
-void bsp_arrange(struct uwm_workspace *workspace, int width, int height, int gap)
+void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int height, int gap)
 {
 	if (workspace->root == NULL)
 		return;
@@ -201,16 +202,16 @@ void bsp_arrange(struct uwm_workspace *workspace, int width, int height, int gap
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
 		/* Arrange the focused window to fill the full workspace */
-		bsp_arrange_node(workspace->root, 0, 0, width, height, gap);
+		bsp_arrange_node(workspace->root, x, y, width, height, gap);
 		/* Ensure focused window fills workspace regardless of tree arrangement */
 		wlr_scene_node_set_position(
-			&workspace->focused->scene_tree->node, 0, 0);
+			&workspace->focused->scene_tree->node, x, y);
 		wlr_xdg_toplevel_set_size(
 			workspace->focused->xdg_toplevel, width, height);
 		wlr_scene_node_set_enabled(
 			&workspace->focused->scene_tree->node, true);
 	} else {
-		bsp_arrange_node(workspace->root, 0, 0, width, height, gap);
+		bsp_arrange_node(workspace->root, x, y, width, height, gap);
 	}
 }
 
@@ -432,15 +433,29 @@ struct uwm_bsp_node *bsp_find_tabbed_parent(
 	return NULL;
 }
 
-void get_output_size(struct uwm_server *server, int *w, int *h)
+void get_output_size(struct uwm_server *server, int *x, int *y, int *w, int *h)
 {
 	struct wlr_output_layout *layout = server->output_layout;
 	struct wlr_output_layout_output *lo;
+	*x = 0;
+	*y = 0;
 	*w = 0;
 	*h = 0;
 	wl_list_for_each(lo, &layout->outputs, link) {
 		struct wlr_output *output = lo->output;
 		if (output->enabled) {
+			/* Find the matching uwm_output for usable area */
+			struct uwm_output *uwm_out;
+			wl_list_for_each(uwm_out, &server->outputs, link) {
+				if (uwm_out->wlr_output == output) {
+					*x = uwm_out->usable_area.x;
+					*y = uwm_out->usable_area.y;
+					*w = uwm_out->usable_area.width;
+					*h = uwm_out->usable_area.height;
+					return;
+				}
+			}
+			/* Fallback: no usable area set yet, use raw dimensions */
 			*w = output->width;
 			*h = output->height;
 			return;
@@ -453,9 +468,9 @@ void bsp_arrange_workspace(struct uwm_workspace *workspace)
 	struct uwm_server *server = workspace->focused
 		? workspace->focused->server : NULL;
 	if (!server) return;
-	int w, h;
-	get_output_size(server, &w, &h);
-	bsp_arrange(workspace, w, h, server->config.inner_gap);
+	int x, y, w, h;
+	get_output_size(server, &x, &y, &w, &h);
+	bsp_arrange(workspace, x, y, w, h, server->config.inner_gap);
 }
 
 static struct uwm_bsp_node *bsp_nearest_in_direction(

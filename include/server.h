@@ -17,6 +17,8 @@
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_ext_image_copy_capture_v1.h>
+#include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
 #include "config.h"
 #include "workspace.h"
@@ -80,6 +82,7 @@ struct uwm_server {
 	struct uwm_workspace_manager workspaces;
 	struct wlr_session *session;
 	struct uwm_config config;
+	struct wl_listener renderer_lost;
 	uint32_t last_button_serial;
 
 	/* Layer shell support */
@@ -90,9 +93,11 @@ struct uwm_server {
 	struct uwm_idle_inhibit idle_inhibit;
 	struct wl_list idle_inhibitors;
 
-	/* Screencopy support */
+	/* Screencopy & screen sharing support */
 	struct wlr_screencopy_manager_v1 *screencopy_manager;
 	struct wlr_ext_image_copy_capture_manager_v1 *ext_image_copy_capture_manager;
+	struct wlr_export_dmabuf_manager_v1 *export_dmabuf_manager;
+	struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1;
 
 	/* Transient seat protocol support */
 	struct wlr_transient_seat_manager_v1 *transient_seat_manager;

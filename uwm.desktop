@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=UWM
+Comment=A minimal BSP tiling Wayland compositor
+Exec=uwm
+Type=Application
+DesktopNames=uwm;wlroots

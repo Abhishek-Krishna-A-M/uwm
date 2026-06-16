@@ -21,8 +21,12 @@ struct uwm_output {
 	struct wlr_scene_tree *layer_floating;
 	struct wlr_scene_tree *layer_top;
 	struct wlr_scene_tree *layer_overlay;
+
+	/* Usable area after layer shell exclusive zones are applied */
+	struct wlr_box usable_area;
 };
 
 void server_new_output(struct wl_listener *listener, void *data);
+void scene_dump_delayed(struct uwm_server *server);
 
 #endif /* OUTPUT_H */
