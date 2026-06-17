@@ -153,7 +153,7 @@ void render_frame(State *state) {
 
 		char ws_str[16];
 		bool active = state->workspaces[i].active;
-		snprintf(ws_str, sizeof(ws_str), "\u300C%d\u300D", state->workspaces[i].id + 1);
+		snprintf(ws_str, sizeof(ws_str), "「 %d 」", state->workspaces[i].id + 1);
 
 		int tw, th;
 		text_extents(cr, font_desc, ws_str, &tw, &th);
@@ -231,7 +231,7 @@ void render_frame(State *state) {
 	}
 
 	// Volume Icons (FontAwesome Stable)
-	const char *vol_icon = state->muted ? " " : " ";
+	const char *vol_icon = state->muted ? " " : " ";
 	if (state->muted)
 		snprintf(vol_str, sizeof(vol_str), "%s Muted", vol_icon);
 	else
