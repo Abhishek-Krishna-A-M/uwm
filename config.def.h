@@ -13,6 +13,11 @@
 #define UNFOCUS_DIM 0.85f
 #define INNER_GAP 5
 
+/* multi-monitor */
+#define AUTO_ENABLE_OUTPUTS true    /* automatically enable new outputs */
+#define AUTO_ARRANGE_OUTPUTS true   /* auto-arrange outputs left-to-right */
+#define MIRROR_NEW_OUTPUTS false    /* mirror on new outputs (false = extend) */
+
 /* input */
 #define FOCUS_FOLLOWS_POINTER true
 #define KEY_REPEAT_DELAY 250
@@ -146,16 +151,17 @@
 	"wireplumber", \
 	"foot --server", \
 	"mako", \
-	"waybar", \
+	"ubar", \
 	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
 	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
 	NULL
 
 /* compile-time rules */
-#define RULE(appid, title, ws, fl, fs, op_en, op_val) \
-	{ .app_id = appid, .title = title, .workspace = ws, \
+#define RULE(appid, _title, ws, fl, fs, op_en, op_val) \
+	{ .app_id = appid, .title = _title, .workspace = ws, \
 	  .set_floating = fl, .set_fullscreen = fs, \
 	  .has_opacity = op_en, .opacity = op_val }
 
 #define RULES \
+	RULE("*org.freedesktop.impl.portal*", NULL, 0, true, false, false, 0) \
 	/* no default rules */

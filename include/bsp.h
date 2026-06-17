@@ -9,6 +9,10 @@ struct uwm_toplevel;
 struct uwm_server;
 struct wlr_scene_tree;
 
+#define BSP_POOL_SIZE 512
+
+struct uwm_bsp_pool;
+
 enum uwm_split {
 	UWM_SPLIT_VERTICAL,
 	UWM_SPLIT_HORIZONTAL,
@@ -32,6 +36,16 @@ struct uwm_bsp_node {
 	struct uwm_bsp_node *active_child;
 };
 
+struct uwm_bsp_pool {
+	struct uwm_bsp_node nodes[BSP_POOL_SIZE];
+	struct uwm_bsp_node *freelist;
+	int count;
+};
+
+void bsp_pool_init(struct uwm_bsp_pool *pool);
+struct uwm_bsp_node *bsp_node_alloc(struct uwm_bsp_pool *pool);
+void bsp_node_free(struct uwm_bsp_pool *pool, struct uwm_bsp_node *node);
+
 struct uwm_bsp_node *bsp_insert(
 	struct uwm_workspace *workspace,
 	struct uwm_toplevel *toplevel);
@@ -49,7 +63,8 @@ void bsp_arrange(
 	int x, int y, int width, int height, int gap);
 
 void bsp_destroy(
-	struct uwm_bsp_node *node);
+	struct uwm_bsp_node *node,
+	struct uwm_bsp_pool *pool);
 
 struct uwm_toplevel *bsp_focus_left(
 	struct uwm_workspace *workspace);
@@ -94,7 +109,7 @@ void bsp_arrange_workspace(
 	struct uwm_workspace *workspace);
 
 void get_output_size(
-	struct uwm_server *server,
+	struct uwm_workspace *workspace,
 	int *x, int *y, int *width, int *height);
 
 #endif

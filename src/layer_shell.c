@@ -73,15 +73,13 @@ void layer_surface_arrange(struct uwm_output *output) {
 	/* Store usable area for window arrangement */
 	output->usable_area = usable_area;
 
-	/* Rearrange tiled windows if usable area changed */
+	/* Rearrange only the workspace displayed on this output */
 	struct uwm_server *server = output->server;
-	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
-		struct uwm_workspace *ws = &server->workspaces.workspaces[i];
-		if (ws->root) {
-			bsp_arrange(ws, usable_area.x, usable_area.y,
-				usable_area.width, usable_area.height,
-				server->config.inner_gap);
-		}
+	struct uwm_workspace *ws = &server->workspaces.workspaces[output->current_workspace];
+	if (ws->root) {
+		bsp_arrange(ws, usable_area.x, usable_area.y,
+			usable_area.width, usable_area.height,
+			server->config.inner_gap);
 	}
 
 	/* Find topmost keyboard-interactive exclusive layer and focus it */
@@ -224,8 +222,12 @@ static void handle_map(struct wl_listener *listener, void *data) {
 static void handle_unmap(struct wl_listener *listener, void *data) {
 	struct uwm_layer_surface *surface =
 		wl_container_of(listener, surface, unmap);
-	struct uwm_server *server = surface->output->server;
 	(void)data;
+
+	if (!surface->output)
+		return;
+
+	struct uwm_server *server = surface->output->server;
 
 	/* If this layer had keyboard focus, restore to workspace window */
 	if (surface->layer_surface->surface ==
@@ -269,8 +271,11 @@ static void handle_node_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&surface->new_popup.link);
 	wl_list_remove(&surface->node_destroy.link);
 
-	/* Clear data pointer on the layer surface to prevent dangling refs */
-	surface->layer_surface->data = NULL;
+	/* Clear data pointers to prevent dangling refs (ASan use-after-free) */
+	if (surface->layer_surface)
+		surface->layer_surface->data = NULL;
+	if (surface->scene_node)
+		surface->scene_node->data = NULL;
 
 	wl_list_remove(&surface->link);
 	free(surface);
@@ -325,7 +330,8 @@ struct uwm_layer_surface *layer_surface_create(
 	}
 
 	/* Store our surface struct as the scene node data */
-	surface->scene_layer_surface->tree->node.data = surface;
+	surface->scene_node = &surface->scene_layer_surface->tree->node;
+	surface->scene_node->data = surface;
 
 	/* Set up listeners */
 	surface->surface_commit.notify = handle_surface_commit;

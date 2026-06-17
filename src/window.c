@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <wlr/util/log.h>
+#include "config.h"
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -22,15 +23,13 @@ static void set_window_opacity(struct wlr_scene_buffer *buffer,
 #include "layout.h"
 #include "server.h"
 #include "rules.h"
+#include "output.h"
+#include "uwm_bar.h"
 
 void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (toplevel == NULL) {
 		return;
 	}
-	/* Transient helpers must never receive keyboard focus.
-	 * We use the flag set once at map time instead of should_tile_toplevel()
-	 * because the client may commit non-zero constraints after map, which
-	 * would make the heuristic return the wrong answer. */
 	if (toplevel->is_transient) {
 		return;
 	}
@@ -66,6 +65,12 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	ws->last_focused = ws->focused;
 	ws->focused = toplevel;
 
+	/* Update active output to the one displaying this workspace */
+	if (ws->output) {
+		server->active_output = ws->output;
+		server->workspaces.current = ws->id;
+	}
+
 	/* Update tabbed/monocle container active_child */
 	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
 		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
@@ -81,7 +86,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	/* Update display for workspace-level monocle */
 	if (ws->monocle) {
 		int x, y, out_w, out_h;
-		get_output_size(server, &x, &y, &out_w, &out_h);
+		get_output_size(ws, &x, &y, &out_w, &out_h);
 		bsp_arrange(ws, x, y, out_w, out_h, server->config.inner_gap);
 	}
 
@@ -111,25 +116,32 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
 
-	/* Warp cursor to center of window if not already inside */
-	struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
-	double wx = toplevel->scene_tree->node.x + geo.x;
-	double wy = toplevel->scene_tree->node.y + geo.y;
-	double ww = geo.width;
-	double wh = geo.height;
-	if (ww > 0 && wh > 0 &&
-			(server->cursor->x < wx || server->cursor->x >= wx + ww ||
-			 server->cursor->y < wy || server->cursor->y >= wy + wh)) {
-		wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
+	/* Warp cursor to center of window if not already inside.
+	 * Skip during interactive move/resize to avoid fighting the user. */
+	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
+		struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+		double wx = toplevel->scene_tree->node.x + geo.x;
+		double wy = toplevel->scene_tree->node.y + geo.y;
+		double ww = geo.width;
+		double wh = geo.height;
+		if (ww > 0 && wh > 0 &&
+				(server->cursor->x < wx || server->cursor->x >= wx + ww ||
+				 server->cursor->y < wy || server->cursor->y >= wy + wh)) {
+			wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
+		}
+	}
+
+	/* Notify bar clients about title change.
+	 * Skip during move/resize to batch updates. */
+	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH
+			&& server->bar_manager && server->active_output) {
+		uwm_bar_send_output(server->active_output);
 	}
 }
 
 struct uwm_toplevel *desktop_toplevel_at(
 		struct uwm_server *server, double lx, double ly,
 		struct wlr_surface **surface, double *sx, double *sy) {
-	/* This returns the topmost node in the scene at the given layout coords.
-	 * We only care about surface nodes as we are specifically looking for a
-	 * surface in the surface tree of a uwm_toplevel. */
 	struct wlr_scene_node *node = wlr_scene_node_at(&server->scene->tree.node, lx, ly, sx, sy);
 	if (node == NULL || node->type != WLR_SCENE_NODE_BUFFER) {
 		return NULL;
@@ -142,8 +154,6 @@ struct uwm_toplevel *desktop_toplevel_at(
 
 	*surface = scene_surface->surface;
 
-	/* Don't return layer surfaces (or their subsurfaces/popups) as toplevels.
-	 * Walk up the surface tree to check if any ancestor is a layer surface. */
 	struct wlr_surface *check = *surface;
 	do {
 		if (!check) break;
@@ -164,8 +174,6 @@ struct uwm_toplevel *desktop_toplevel_at(
 		break;
 	} while (true);
 
-	/* Find the node corresponding to the uwm_toplevel at the root of this
-	 * surface tree, it is the only one for which we set the data field. */
 	struct wlr_scene_tree *tree = node->parent;
 	while (tree != NULL && tree->node.data == NULL) {
 		tree = tree->node.parent;
@@ -183,19 +191,19 @@ struct uwm_toplevel *desktop_toplevel_at(
 bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 	struct wlr_xdg_toplevel *xdt = toplevel->xdg_toplevel;
 
-	/* Dialogs (windows with a parent toplevel) should not be tiled.
-	 * This includes browser share-picker dialogs, file dialogs, etc. */
 	if (xdt->parent) {
 		return false;
 	}
 
-	/* Transient helpers (clipboard managers, portals, etc.) create a
-	 * toplevel, do their work, and exit within a single event loop.
-	 * At map time they have not set any size constraints, so all four
-	 * min/max values are zero.  A real application window will always
-	 * have at least a non-zero max size from its configure. */
 	if (xdt->current.min_width == 0 && xdt->current.min_height == 0
 			&& xdt->current.max_width == 0 && xdt->current.max_height == 0) {
+		return false;
+	}
+
+	/* Fixed-size windows (min == max) are likely dialogs, float them */
+	if (xdt->current.min_width > 0 && xdt->current.min_height > 0
+			&& xdt->current.min_width == xdt->current.max_width
+			&& xdt->current.min_height == xdt->current.max_height) {
 		return false;
 	}
 
@@ -203,7 +211,6 @@ bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 }
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
-	/* Called when the surface is mapped, or ready to display on-screen. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
 	const char *app_id = toplevel->xdg_toplevel->app_id;
@@ -216,9 +223,6 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 	wl_list_insert(&toplevel->workspace->toplevels, &toplevel->workspace_link);
 
-	/* Create foreign toplevel handle for screen sharing portal integration.
-	 * This advertises the window to xdg-desktop-portal-wlr so clients can
-	 * select it for per-window capture. */
 	if (toplevel->server->foreign_toplevel_list) {
 		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
 			.title = toplevel->xdg_toplevel->title,
@@ -229,25 +233,23 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 				toplevel->server->foreign_toplevel_list, &state);
 	}
 
-	/* Mark transient helpers at map time. The flag is permanent —
-	 * should_tile_toplevel() can give different results later once the
-	 * client commits non-zero constraints, so we snapshot the decision here. */
 	if (!should_tile_toplevel(toplevel)) {
-		toplevel->is_transient = true;
-		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-		return;
+		goto float_window;
 	}
 
 	struct uwm_workspace *current = &toplevel->server->workspaces.workspaces[toplevel->server->workspaces.current];
 
 	rule_apply_all(&toplevel->server->config, toplevel);
 
+	if (toplevel->floating || toplevel->fullscreen)
+		goto float_window;
+
 	if (!toplevel->floating && !toplevel->fullscreen) {
 		bsp_insert(toplevel->workspace, toplevel);
 	}
 
 	int x, y, w, h;
-	get_output_size(toplevel->server, &x, &y, &w, &h);
+	get_output_size(toplevel->workspace, &x, &y, &w, &h);
 	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
@@ -260,13 +262,44 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 			|| toplevel->workspace->fullscreen_window == toplevel) {
 		focus_toplevel(toplevel);
 	}
+	return;
+
+float_window:
+	/* Float dialogs, transients, and rule-floated windows */
+	if (!toplevel->floating) {
+		int out_x, out_y, out_w, out_h;
+		get_output_size(toplevel->workspace, &out_x, &out_y, &out_w, &out_h);
+
+		toplevel->float_width = (int)(out_w * floating_default_width_ratio);
+		toplevel->float_height = (int)(out_h * floating_default_height_ratio);
+		if (toplevel->float_width < floating_create_min_width)
+			toplevel->float_width = floating_create_min_width;
+		if (toplevel->float_height < floating_create_min_height)
+			toplevel->float_height = floating_create_min_height;
+		toplevel->float_x = (out_w - toplevel->float_width) / 2;
+		toplevel->float_y = (out_h - toplevel->float_height) / 2;
+
+		toplevel->floating = true;
+		wl_list_remove(&toplevel->workspace_link);
+		wl_list_init(&toplevel->workspace_link);
+		wl_list_insert(&toplevel->workspace->floating_windows,
+			&toplevel->floating_link);
+
+		wlr_scene_node_reparent(&toplevel->scene_tree->node,
+			toplevel->server->floating_layer);
+		wlr_scene_node_set_position(&toplevel->scene_tree->node,
+			toplevel->float_x, toplevel->float_y);
+		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
+			toplevel->float_width, toplevel->float_height);
+	}
+
+	focus_toplevel(toplevel);
+	return;
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
-	/* Called when the surface is unmapped, and should no longer be shown. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
 
-	/* Destroy foreign toplevel handle before removing from lists */
 	if (toplevel->ext_foreign_toplevel) {
 		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
 		toplevel->ext_foreign_toplevel = NULL;
@@ -279,20 +312,18 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		app_id ? app_id : "(nil)", title ? title : "(nil)",
 		(void *)seat->keyboard_state.focused_surface);
 
-	/* Reset the cursor mode if the grabbed toplevel was unmapped. */
 	if (toplevel == toplevel->server->grabbed_toplevel) {
 		reset_cursor_mode(toplevel->server);
 	}
 
 	wl_list_remove(&toplevel->link);
 	wl_list_remove(&toplevel->workspace_link);
-	wl_list_remove(&toplevel->floating_link);
 	wl_list_init(&toplevel->workspace_link);
 
 	bsp_remove(toplevel->workspace, toplevel);
 
 	int x, y, w, h;
-	get_output_size(toplevel->server, &x, &y, &w, &h);
+	get_output_size(toplevel->workspace, &x, &y, &w, &h);
 	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	struct uwm_workspace *ws = toplevel->workspace;
@@ -315,7 +346,6 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	/* Exit monocle mode if no tiled windows remain */
 	if (ws->monocle && wl_list_empty(&ws->toplevels)) {
 		ws->monocle = false;
 		if (ws->root) {
@@ -324,11 +354,6 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	/* Restore keyboard focus only if the unmap actually displaced the
-	 * focused window (i.e. ws->focused was pointing to the toplevel that
-	 * just unmapped). Transient helpers never take focus (focus_toplevel
-	 * refuses them), so ws->focused never points to them, and this block
-	 * is correctly skipped — no spurious leave/enter events are sent. */
 	if (focus_was_displaced && ws->focused) {
 		struct wlr_surface *target_surface = ws->focused->xdg_toplevel->base->surface;
 		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
@@ -336,10 +361,6 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 			wlr_log(WLR_INFO, "UNMAP: restoring kb focus to app_id=%s title=%s",
 				ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
 				ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
-			/* Don't call clear_focus — just enter the new surface directly.
-			 * Calling clear_focus can corrupt seat state if another event handler
-			 * (like layer shell) also tries to update focus. DWL and Sway both
-			 * avoid calling clear_focus in event handlers — they only call enter. */
 			wlr_seat_keyboard_notify_enter(seat, target_surface,
 				keyboard->keycodes, keyboard->num_keycodes,
 				&keyboard->modifiers);
@@ -362,8 +383,6 @@ static void decoration_handle_request_mode(struct wl_listener *listener, void *d
 	if (!toplevel->decoration) {
 		return;
 	}
-	/* If the surface isn't initialized yet, we can't schedule a configure.
-	 * The initial commit handler will override the mode anyway. */
 	if (!toplevel->xdg_toplevel->base->initialized) {
 		return;
 	}
@@ -372,7 +391,6 @@ static void decoration_handle_request_mode(struct wl_listener *listener, void *d
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
-	/* Called when a new surface state is committed. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
@@ -383,9 +401,6 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
 
-	/* Update foreign toplevel handle if title or app_id changed.
-	 * This ensures xdg-desktop-portal-wlr sees current window metadata
-	 * for per-window screen sharing selection. */
 	if (toplevel->ext_foreign_toplevel) {
 		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
 			.title = toplevel->xdg_toplevel->title,
@@ -397,10 +412,8 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
-	/* Called when the xdg_toplevel is destroyed. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, destroy);
 
-	/* Destroy foreign toplevel handle if still alive */
 	if (toplevel->ext_foreign_toplevel) {
 		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
 		toplevel->ext_foreign_toplevel = NULL;
@@ -427,6 +440,11 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	if (ws->fullscreen_window == toplevel)
 		ws->fullscreen_window = NULL;
 
+	/* Notify bar: workspace occupancy may have changed */
+	if (toplevel->server->bar_manager && toplevel->server->active_output) {
+		uwm_bar_send_output(toplevel->server->active_output);
+	}
+
 	free(toplevel);
 }
 
@@ -447,13 +465,6 @@ static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data
 }
 
 static void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data) {
-	/* This event is raised when a client would like to maximize itself,
-	 * typically because the user clicked on the maximize button on client-side
-	 * decorations. uwm doesn't support maximization, but to conform to
-	 * xdg-shell protocol we still must send a configure.
-	 * wlr_xdg_surface_schedule_configure() is used to send an empty reply.
-	 * However, if the request was sent before an initial commit, we don't do
-	 * anything and let the client finish the initial surface setup. */
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, request_maximize);
 	if (toplevel->xdg_toplevel->base->initialized) {
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
@@ -473,9 +484,6 @@ static void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *
 
 void server_new_toplevel_decoration(struct wl_listener *listener,
 		void *data) {
-	/* Cannot call set_mode here because the xdg_surface has not yet been
-	 * initialized (no initial commit). Store the decoration and wait for
-	 * the commit handler to set the mode. */
 	struct wlr_xdg_toplevel_decoration_v1 *decoration = data;
 	struct wlr_xdg_surface *xdg_surface = decoration->toplevel->base;
 	struct wlr_scene_tree *tree = xdg_surface->data;
@@ -489,11 +497,9 @@ void server_new_toplevel_decoration(struct wl_listener *listener,
 }
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
-	/* This event is raised when a client creates a new toplevel (application window). */
 	struct uwm_server *server = wl_container_of(listener, server, new_xdg_toplevel);
 	struct wlr_xdg_toplevel *xdg_toplevel = data;
 
-	/* Allocate a uwm_toplevel for this surface */
 	struct uwm_toplevel *toplevel = calloc(1, sizeof(*toplevel));
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
@@ -503,9 +509,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
-	wl_list_init(&toplevel->floating_link);
 
-	/* Listen to the various events it can emit */
 	toplevel->map.notify = xdg_toplevel_map;
 	wl_signal_add(&xdg_toplevel->base->surface->events.map, &toplevel->map);
 	toplevel->unmap.notify = xdg_toplevel_unmap;
@@ -516,7 +520,6 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->destroy.notify = xdg_toplevel_destroy;
 	wl_signal_add(&xdg_toplevel->events.destroy, &toplevel->destroy);
 
-	/* cotd */
 	toplevel->request_move.notify = xdg_toplevel_request_move;
 	wl_signal_add(&xdg_toplevel->events.request_move, &toplevel->request_move);
 	toplevel->request_resize.notify = xdg_toplevel_request_resize;
@@ -528,21 +531,14 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 }
 
 static void xdg_popup_commit(struct wl_listener *listener, void *data) {
-	/* Called when a new surface state is committed. */
 	struct uwm_popup *popup = wl_container_of(listener, popup, commit);
 
 	if (popup->xdg_popup->base->initial_commit) {
-		/* When an xdg_surface performs an initial commit, the compositor must
-		 * reply with a configure so the client can map the surface.
-		 * uwm sends an empty configure. A more sophisticated compositor
-		 * might change an xdg_popup's geometry to ensure it's not positioned
-		 * off-screen, for example. */
 		wlr_xdg_surface_schedule_configure(popup->xdg_popup->base);
 	}
 }
 
 static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
-	/* Called when the xdg_popup is destroyed. */
 	struct uwm_popup *popup = wl_container_of(listener, popup, destroy);
 
 	wl_list_remove(&popup->commit.link);
@@ -552,17 +548,11 @@ static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
 }
 
 void server_new_xdg_popup(struct wl_listener *listener, void *data) {
-	/* This event is raised when a client creates a new popup. */
 	struct wlr_xdg_popup *xdg_popup = data;
 
 	struct uwm_popup *popup = calloc(1, sizeof(*popup));
 	popup->xdg_popup = xdg_popup;
 
-	/* We must add xdg popups to the scene graph so they get rendered. The
-	 * wlroots scene graph provides a helper for this, but to use it we must
-	 * provide the proper parent scene node of the xdg popup. To enable this,
-	 * we always set the user data field of xdg_surfaces to the corresponding
-	 * scene node. */
 	struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent);
 	assert(parent != NULL);
 	struct wlr_scene_tree *parent_tree = parent->data;

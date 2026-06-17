@@ -16,16 +16,12 @@
 #include "window.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
+#include "uwm_bar.h"
 
 static int handle_term_signal(int signo, void *data) {
 	struct uwm_server *server = data;
 	wlr_log(WLR_INFO, "Received signal %d, terminating compositor", signo);
 	wl_display_terminate(server->wl_display);
-	return 0;
-}
-
-static int handle_scene_dump_timer(void *data) {
-	scene_dump_delayed((struct uwm_server *)data);
 	return 0;
 }
 
@@ -187,9 +183,15 @@ bool server_init(struct uwm_server *server) {
 	 * arrangement of screens in a physical layout. */
 	server->output_layout = wlr_output_layout_create(server->wl_display);
 
+	/* Listen for output layout changes (position updates) */
+	server->output_layout_change.notify = handle_output_layout_change;
+	wl_signal_add(&server->output_layout->events.change,
+		&server->output_layout_change);
+
 	/* Configure a listener to be notified when new outputs are available on the
 	 * backend. */
 	wl_list_init(&server->outputs);
+	server->active_output = NULL;
 	server->new_output.notify = server_new_output;
 	wl_signal_add(&server->backend->events.new_output, &server->new_output);
 
@@ -315,6 +317,7 @@ bool server_init(struct uwm_server *server) {
 	server->request_set_primary_selection.notify = seat_request_set_primary_selection;
 	wl_signal_add(&server->seat->events.request_set_primary_selection, &server->request_set_primary_selection);
 
+	bsp_pool_init(&server->bsp_pool);
 	workspace_manager_init(&server->workspaces);
 
 	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++)
@@ -324,6 +327,13 @@ bool server_init(struct uwm_server *server) {
 	/* Initialize layer shell protocol */
 	if (!layer_shell_create(server)) {
 		wlr_log(WLR_ERROR, "Failed to create layer shell");
+		return false;
+	}
+
+	/* Initialize UWM bar protocol */
+	if (!uwm_bar_manager_create(server)) {
+		wlr_log(WLR_ERROR, "Failed to create UWM bar manager");
+		layer_shell_destroy(server);
 		return false;
 	}
 
@@ -359,14 +369,6 @@ bool server_init(struct uwm_server *server) {
 	server->new_capture_session.notify = handle_new_capture_session;
 	wl_signal_add(&server->ext_image_copy_capture_manager->events.new_session,
 		&server->new_capture_session);
-
-	/* Schedule a delayed scene tree dump for diagnostics */
-	struct wl_event_loop *evloop = wl_display_get_event_loop(server->wl_display);
-	struct wl_event_source *dump_timer = wl_event_loop_add_timer(evloop,
-		handle_scene_dump_timer, server);
-	if (dump_timer) {
-		wl_event_source_timer_update(dump_timer, 3000);
-	}
 
 	/* Initialize export-dmabuf protocol for direct DMA-BUF export.
 	 * Used by capture tools and OBS for zero-copy frame access. */
@@ -415,12 +417,13 @@ void server_finish(struct uwm_server *server) {
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
 
-	/* Clean up layer shell, idle inhibit, and screencopy */
+	/* Clean up layer shell, idle inhibit, screencopy, and bar */
 	layer_shell_destroy(server);
 	idle_inhibit_destroy(server);
+	uwm_bar_manager_destroy(server);
 
 	config_finish(&server->config);
-	workspace_manager_finish(&server->workspaces);
+	workspace_manager_finish(&server->workspaces, &server->bsp_pool);
 
 	wl_list_remove(&server->new_xdg_toplevel.link);
 	wl_list_remove(&server->new_xdg_popup.link);
@@ -450,15 +453,18 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->request_set_primary_selection.link);
 
 	wl_list_remove(&server->new_output.link);
+	wl_list_remove(&server->output_layout_change.link);
 
 	wl_list_remove(&server->renderer_lost.link);
 
+	/* Destroy backend before scene so output destroy handlers
+	 * can safely access per-output scene nodes. */
+	wlr_backend_destroy(server->backend);
 	wlr_scene_node_destroy(&server->scene->tree.node);
 	wlr_xcursor_manager_destroy(server->cursor_mgr);
 	wlr_cursor_destroy(server->cursor);
 	wlr_allocator_destroy(server->allocator);
 	wlr_renderer_destroy(server->renderer);
-	wlr_backend_destroy(server->backend);
 	if (server->session) {
 		wlr_session_destroy(server->session);
 	}

@@ -18,6 +18,7 @@
 #include "floating.h"
 #include "layout.h"
 #include "server.h"
+#include "output.h"
 
 void reset_cursor_mode(struct uwm_server *server) {
 	server->cursor_mode = UWM_CURSOR_PASSTHROUGH;
@@ -84,6 +85,8 @@ static struct uwm_server *uwm_server;
 /* ========== Workspace/arrangement helpers ========== */
 static struct uwm_workspace *current_ws(void)
 {
+	if (uwm_server->active_output && uwm_server->active_output->current_workspace < UWM_WORKSPACE_COUNT)
+		return &uwm_server->workspaces.workspaces[uwm_server->active_output->current_workspace];
 	return &uwm_server->workspaces.workspaces[uwm_server->workspaces.current];
 }
 
@@ -91,7 +94,7 @@ static void bsp_arrange_current_workspace(void)
 {
 	struct uwm_workspace *ws = current_ws();
 	int x, y, w, h;
-	get_output_size(uwm_server, &x, &y, &w, &h);
+	get_output_size(ws, &x, &y, &w, &h);
 	bsp_arrange(ws, x, y, w, h, uwm_server->config.inner_gap);
 }
 
@@ -262,8 +265,9 @@ void resizeshdown(const union arg *arg)
 /* workspace switching */
 void workspace(const union arg *arg)
 {
-	if ((uint32_t)arg->i < UWM_WORKSPACE_COUNT)
-		workspace_switch(uwm_server, (uint32_t)arg->i);
+	uint32_t ws = (uint32_t)arg->i;
+	if (ws < UWM_WORKSPACE_COUNT)
+		workspace_switch(uwm_server, ws);
 }
 
 void movetows(const union arg *arg)
@@ -341,27 +345,10 @@ void rotatesplit(const union arg *arg)
 static bool handle_keybinding(
 		xkb_keysym_t sym, uint32_t modifiers,
 		const struct key *karr, size_t klen,
-		struct xkb_keymap *keymap)
+		xkb_mod_mask_t ctrl, xkb_mod_mask_t alt,
+		xkb_mod_mask_t logo, xkb_mod_mask_t shift)
 {
 	sym = xkb_keysym_to_lower(sym);
-
-	xkb_mod_mask_t ctrl = 0, alt = 0, shift = 0, logo = 0;
-	if (keymap) {
-		xkb_mod_index_t idx;
-		idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CTRL);
-		if (idx != XKB_MOD_INVALID) ctrl = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_ALT);
-		if (idx != XKB_MOD_INVALID) alt = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_LOGO);
-		if (idx != XKB_MOD_INVALID) logo = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_SHIFT);
-		if (idx != XKB_MOD_INVALID) shift = (xkb_mod_mask_t)1 << idx;
-	} else {
-		ctrl = WLR_MODIFIER_CTRL;
-		alt = WLR_MODIFIER_ALT;
-		logo = WLR_MODIFIER_LOGO;
-		shift = WLR_MODIFIER_SHIFT;
-	}
 
 	for (size_t i = 0; i < klen; i++) {
 		if (karr[i].keysym != sym)
@@ -374,9 +361,6 @@ static bool handle_keybinding(
 		if (required & WLR_MODIFIER_LOGO)  binding_mask |= logo;
 		if (required & WLR_MODIFIER_SHIFT) binding_mask |= shift;
 
-		/* Require an exact match on significant modifiers (ctrl/alt/logo/shift).
-		 * Without this, Mod+Shift+1 would match the workspace binding (which
-		 * only needs MOD) before movetows (MOD|SHIFT) gets checked. */
 		xkb_mod_mask_t significant = ctrl | alt | logo | shift;
 		if ((modifiers & significant) == binding_mask) {
 			karr[i].func(&karr[i].arg);
@@ -399,7 +383,9 @@ static int keyboard_repeat_handler(void *data) {
 	}
 
 	handle_keybinding(keyboard->repeat_sym, modifiers,
-		keys, keys_len, keyboard->wlr_keyboard->keymap);
+		keys, keys_len,
+		keyboard->cached_ctrl, keyboard->cached_alt,
+		keyboard->cached_logo, keyboard->cached_shift);
 
 	int rate = server->config.key_repeat_rate;
 	if (rate > 0) {
@@ -416,7 +402,22 @@ static void keyboard_repeat_stop(struct uwm_keyboard *keyboard) {
 static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
 	struct uwm_keyboard *keyboard = wl_container_of(listener, keyboard, modifiers);
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
-	if (!(modifiers & WLR_MODIFIER_LOGO))
+	keyboard->cached_ctrl = 0;
+	keyboard->cached_alt = 0;
+	keyboard->cached_logo = 0;
+	keyboard->cached_shift = 0;
+	if (keyboard->wlr_keyboard->keymap) {
+		xkb_mod_index_t idx;
+		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_CTRL);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_ctrl = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_ALT);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_alt = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_LOGO);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_logo = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_SHIFT);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_shift = (xkb_mod_mask_t)1 << idx;
+	}
+	if (!(modifiers & keyboard->cached_logo))
 		keyboard_repeat_stop(keyboard);
 	wlr_seat_set_keyboard(keyboard->server->seat, keyboard->wlr_keyboard);
 	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &keyboard->wlr_keyboard->modifiers);
@@ -432,13 +433,8 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
 	uwm_server = server;
 
-	/* libinput keycode -> xkbcommon */
 	uint32_t keycode = event->keycode + 8;
 
-	/* Use level-0 (unmodified) keysyms for keybinding matching.
-	 * The modifier state is checked separately, so Mod+Shift+1
-	 * (which composes to XKB_KEY_exclam) correctly matches a
-	 * binding that specifies XKB_KEY_1. */
 	struct xkb_keymap *keymap = keyboard->wlr_keyboard->keymap;
 	const xkb_keysym_t *syms;
 	int nsyms = xkb_keymap_key_get_syms_by_level(
@@ -452,18 +448,6 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	bool handled = false;
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 
-	/* Resolve actual modifier indices from the XKB keymap */
-	xkb_mod_mask_t ctrl_mask = 0, alt_mask = 0, logo_mask = 0;
-	xkb_mod_index_t idx;
-	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CTRL);
-	if (idx != XKB_MOD_INVALID) ctrl_mask = (xkb_mod_mask_t)1 << idx;
-	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_ALT);
-	if (idx != XKB_MOD_INVALID) alt_mask = (xkb_mod_mask_t)1 << idx;
-	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_LOGO);
-	if (idx != XKB_MOD_INVALID) logo_mask = (xkb_mod_mask_t)1 << idx;
-
-	/* VT switching (Ctrl+Alt+F[1-12]) — uses hardware keycodes for
-	 * correctness with wlroots 0.20 timing */
 	bool ctrl_held = false, alt_held = false;
 	for (size_t i = 0; i < keyboard->wlr_keyboard->num_keycodes; i++) {
 		uint32_t kc = keyboard->wlr_keyboard->keycodes[i];
@@ -496,22 +480,24 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	/* Unmodified key bindings (no modifier required) */
 	if (!handled && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (int i = 0; i < nsyms; i++) {
-			if (handle_keybinding(syms_copy[i], modifiers,
-					keys_unmodified, keys_unmodified_len, keymap)) {
+		if (handle_keybinding(syms_copy[i], modifiers,
+				keys_unmodified, keys_unmodified_len,
+				keyboard->cached_ctrl, keyboard->cached_alt,
+				keyboard->cached_logo, keyboard->cached_shift)) {
 				handled = true;
 			}
 		}
 	}
 
-	/* Super-modifier key bindings */
-	if (!handled && (modifiers & logo_mask)
+	if (!handled && (modifiers & keyboard->cached_logo)
 			&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (int i = 0; i < nsyms; i++) {
 			if (handle_keybinding(syms_copy[i], modifiers,
-					keys, keys_len, keymap)) {
+					keys, keys_len,
+					keyboard->cached_ctrl, keyboard->cached_alt,
+					keyboard->cached_logo, keyboard->cached_shift)) {
 				handled = true;
 				keyboard->repeat_sym = syms_copy[i];
 				keyboard->repeat_keycode = event->keycode;
@@ -564,6 +550,22 @@ static void server_new_keyboard(struct uwm_server *server, struct wlr_input_devi
 	wlr_keyboard_set_repeat_info(wlr_keyboard,
 		server->config.key_repeat_rate,
 		server->config.key_repeat_delay);
+
+	keyboard->cached_ctrl = 0;
+	keyboard->cached_alt = 0;
+	keyboard->cached_logo = 0;
+	keyboard->cached_shift = 0;
+	if (wlr_keyboard->keymap) {
+		xkb_mod_index_t idx;
+		idx = xkb_keymap_mod_get_index(wlr_keyboard->keymap, XKB_MOD_NAME_CTRL);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_ctrl = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(wlr_keyboard->keymap, XKB_MOD_NAME_ALT);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_alt = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(wlr_keyboard->keymap, XKB_MOD_NAME_LOGO);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_logo = (xkb_mod_mask_t)1 << idx;
+		idx = xkb_keymap_mod_get_index(wlr_keyboard->keymap, XKB_MOD_NAME_SHIFT);
+		if (idx != XKB_MOD_INVALID) keyboard->cached_shift = (xkb_mod_mask_t)1 << idx;
+	}
 
 	struct wl_event_loop *loop = wl_display_get_event_loop(server->wl_display);
 	keyboard->repeat_timer = wl_event_loop_add_timer(loop,

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="uwm_bar_unstable_v1">
+  <copyright>
+    Copyright © 2026 UWM Contributors
+
+    Permission is hereby granted, free of charge, to any person
+    obtaining a copy of this software and associated documentation
+    files (the "Software"), to deal in the Software without
+    restriction, including without limitation the rights to use,
+    copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following
+    conditions:
+
+    The above copyright notice and this permission notice (including
+    the next paragraph) shall be included in all copies or
+    substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+    OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+    NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+    WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+    OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <interface name="zwp_uwm_bar_v1" version="1">
+    <description summary="UWM bar manager">
+      A global interface used by bar clients to receive workspace
+      state and focused window title from the UWM compositor.
+
+      One instance is created per output to support multi-monitor.
+    </description>
+
+    <request name="get_workspace_group">
+      <description summary="get workspace group for an output">
+        Create a workspace group object for the given output.
+        If output is NULL, the group covers all workspaces.
+      </description>
+      <arg name="output" type="object" interface="wl_output" allow-null="true"/>
+      <arg name="id" type="new_id" interface="zwp_uwm_workspace_group_v1"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the bar manager"/>
+    </request>
+  </interface>
+
+  <interface name="zwp_uwm_workspace_group_v1" version="1">
+    <description summary="workspace group for an output">
+      Reports workspace state and focused window title for a
+      specific output. Events are sent in batches terminated
+      by a done event.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the workspace group"/>
+    </request>
+
+    <event name="workspace">
+      <description summary="workspace state">
+        Announces a workspace on this output. Sent at startup and
+        on changes. The active flag is 1 if this is the current
+        workspace on the output, 0 otherwise. The occupied flag
+        is 1 if the workspace has any windows on it.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="active" type="uint"/>
+      <arg name="occupied" type="uint"/>
+    </event>
+
+    <event name="focused_title">
+      <description summary="focused window title">
+        The title of the currently focused window on the output
+        associated with this workspace group.
+      </description>
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="done">
+      <description summary="batch complete">
+        Marks the end of a batch of workspace and title updates.
+        The client should process all previous events in the batch
+        before redrawing.
+      </description>
+    </event>
+  </interface>
+</protocol>

@@ -8,6 +8,7 @@
 
 #define UWM_WORKSPACE_COUNT 9
 #define UWM_MAX_RULES 64
+#define UWM_MAX_WINDOWS 256
 #define LENGTH(X) (sizeof X / sizeof X[0])
 
 union arg {
