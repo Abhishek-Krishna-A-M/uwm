@@ -15,9 +15,9 @@ void update_layout_visibility(struct uwm_bsp_node *node)
 
 	struct uwm_bsp_node *active = node->active_child;
 
-	struct uwm_bsp_node *leaves[256];
+	struct uwm_bsp_node *leaves[UWM_MAX_WINDOWS];
 	int count = 0;
-	bsp_collect_leaves(node, leaves, &count, 256);
+	bsp_collect_leaves(node, leaves, &count, UWM_MAX_WINDOWS);
 
 	for (int i = 0; i < count; i++) {
 		struct uwm_bsp_node *leaf = leaves[i];
@@ -138,9 +138,9 @@ void cycle_layout_child(struct uwm_workspace *workspace)
 	if (!container || container->first == NULL)
 		return;
 
-	struct uwm_bsp_node *leaves[256];
+	struct uwm_bsp_node *leaves[UWM_MAX_WINDOWS];
 	int count = 0;
-	bsp_collect_leaves(container, leaves, &count, 256);
+	bsp_collect_leaves(container, leaves, &count, UWM_MAX_WINDOWS);
 	if (count < 2)
 		return;
 

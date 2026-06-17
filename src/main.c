@@ -1,25 +1,79 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <wlr/util/log.h>
 #include "server.h"
 #include "config.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
 
+static const char *pid_dir = "/tmp/uwm-autostart";
+
+static void ensure_pid_dir(void)
+{
+	mkdir(pid_dir, 0755);
+}
+
+/* Generate a stable filename from a command string by hashing the first
+ * token (the executable name). This avoids issues with special characters
+ * in command strings and keeps filenames short. */
+static void cmd_to_pidfile(const char *cmd, char *buf, size_t len)
+{
+	char exe[64] = {0};
+	sscanf(cmd, "%63s", exe);
+	/* Simple hash for stable filename */
+	unsigned long h = 5381;
+	for (const char *p = exe; *p; p++)
+		h = ((h << 5) + h) + (unsigned char)*p;
+	snprintf(buf, len, "%s/%lu.pid", pid_dir, h);
+}
+
+static int read_pid(const char *path)
+{
+	FILE *f = fopen(path, "r");
+	if (!f) return -1;
+	int pid = -1;
+	fscanf(f, "%d", &pid);
+	fclose(f);
+	return pid;
+}
+
+static bool pid_alive(int pid)
+{
+	if (pid <= 0) return false;
+	return kill(pid, 0) == 0 || errno == EPERM;
+}
+
 static void spawn_cmd(const char *cmd)
 {
-	/* Skip if this command is already running */
+	ensure_pid_dir();
+
+	char pidfile[128];
+	cmd_to_pidfile(cmd, pidfile, sizeof(pidfile));
+
+	/* Check if an existing instance is still running */
+	int old_pid = read_pid(pidfile);
+	if (old_pid > 0 && pid_alive(old_pid)) {
+		return; /* already running */
+	}
+
+	/* Clean up stale pid file */
+	if (old_pid > 0)
+		unlink(pidfile);
+
 	if (fork() == 0) {
 		setsid();
-		/* Extract first token for pgrep -x exact match */
-		char check[256];
-		snprintf(check, sizeof(check),
-			"pgrep -x \"$(echo '%s' | awk '{print $1}')\" >/dev/null 2>&1",
-			cmd);
-		if (system(check) == 0)
-			_exit(0);
+		/* Write our PID before exec so future invocations can detect us */
+		FILE *pf = fopen(pidfile, "w");
+		if (pf) {
+			fprintf(pf, "%d\n", getpid());
+			fclose(pf);
+		}
 		char *args[] = { "sh", "-c", (char *)cmd, NULL };
 		execvp("sh", args);
 		_exit(1);

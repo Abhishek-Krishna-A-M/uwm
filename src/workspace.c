@@ -4,10 +4,14 @@
 #include "server.h"
 #include "floating.h"
 #include "layout.h"
+#include "output.h"
 #include <stdint.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_xdg_shell.h>
+
+static void workspace_arrange_on_output(struct uwm_workspace *ws,
+		struct uwm_output *output, int gap);
 
 static void restore_container_visibility(struct uwm_bsp_node *node)
 {
@@ -36,18 +40,21 @@ void workspace_manager_init(struct uwm_workspace_manager *wm)
 		wm->workspaces[i].fullscreen_window=NULL;
 		wm->workspaces[i].monocle=false;
 		wm->workspaces[i].tree_gen=0;
+		wm->workspaces[i].output=NULL;
 	}
 	wm->current=0;
 	wm->last=0;
 }
 
-void workspace_manager_finish(struct uwm_workspace_manager *wm)
+void workspace_manager_finish(struct uwm_workspace_manager *wm,
+		struct uwm_bsp_pool *pool)
 {
 	for (uint32_t i=0; i<UWM_WORKSPACE_COUNT; i++) {
 		if (wm->workspaces[i].root) {
-			bsp_destroy(wm->workspaces[i].root);
+			bsp_destroy(wm->workspaces[i].root, pool);
 			wm->workspaces[i].root = NULL;
 		}
+		wm->workspaces[i].output = NULL;
 	}
 }
 
@@ -67,6 +74,20 @@ static void workspace_hide(struct uwm_workspace *ws)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
+}
+
+void workspace_hide_from_output(struct uwm_workspace *ws,
+		struct uwm_output *output)
+{
+	(void)output;
+	/* In the current shared scene graph model, all windows are
+	 * positioned in global layout coordinates. When a workspace is
+	 * removed from an output, we simply hide all its windows.
+	 * Later, per-output scene trees could make this more granular,
+	 * but this is correct for the v1 model. */
+	if (ws->output)
+		return; /* workspace still has an output, don't hide */
+	workspace_hide(ws);
 }
 
 static void workspace_show(struct uwm_workspace *ws)
@@ -95,26 +116,32 @@ static void workspace_show(struct uwm_workspace *ws)
 	}
 }
 
+void workspace_show_on_output(struct uwm_workspace *ws,
+		struct uwm_output *output)
+{
+	(void)output;
+	workspace_show(ws);
+}
+
 void workspace_switch(struct uwm_server *server, uint32_t workspace)
 {
-	if(workspace>=UWM_WORKSPACE_COUNT){
+	if (workspace >= UWM_WORKSPACE_COUNT)
 		return;
-	}
-	struct uwm_workspace_manager *wm = &server->workspaces;
-	if(wm->current==workspace){
-		return;
-	}
-	workspace_hide(&wm->workspaces[wm->current]);
-	wm->last = wm->current;
-	wm->current=workspace;
-	workspace_show(&wm->workspaces[wm->current]);
 
-	struct uwm_workspace *new_ws = &wm->workspaces[wm->current];
-	if (new_ws->fullscreen_window && new_ws->fullscreen_window != new_ws->focused) {
-		focus_toplevel(new_ws->fullscreen_window);
-	} else if (new_ws->focused) {
-		focus_toplevel(new_ws->focused);
+	/* Determine which output to switch on */
+	struct uwm_output *output = server->active_output;
+	if (!output) {
+		output = output_first(server);
+		if (!output)
+			return;
 	}
+
+	output_set_workspace(output, workspace);
+}
+
+void workspace_switch_on_output(struct uwm_output *output, uint32_t workspace)
+{
+	output_set_workspace(output, workspace);
 }
 
 void workspace_focus_previous(struct uwm_server *server)
@@ -128,9 +155,18 @@ void workspace_focus_previous(struct uwm_server *server)
 	focus_toplevel(ws->last_focused);
 }
 
+static void workspace_arrange_on_output(struct uwm_workspace *ws,
+		struct uwm_output *output, int gap)
+{
+	if (output && ws->root) {
+		bsp_arrange(ws, output->usable_area.x, output->usable_area.y,
+			output->usable_area.width, output->usable_area.height, gap);
+	}
+}
+
 void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 {
-	if(workspace>=UWM_WORKSPACE_COUNT){
+	if (workspace>=UWM_WORKSPACE_COUNT){
 		return;
 	}
 
@@ -182,7 +218,8 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		bsp_insert(new_ws, toplevel);
 	}
 
-	if (wm->current == workspace) {
+	/* Only show if the target workspace is currently displayed on an output */
+	if (new_ws->output) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
 		new_ws->focused = toplevel;
 		focus_toplevel(toplevel);
@@ -191,10 +228,10 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		new_ws->focused = toplevel;
 	}
 
-	int area_x, area_y, area_w, area_h;
-	get_output_size(toplevel->server, &area_x, &area_y, &area_w, &area_h);
-	bsp_arrange(old_ws, area_x, area_y, area_w, area_h, toplevel->server->config.inner_gap);
-	bsp_arrange(new_ws, area_x, area_y, area_w, area_h, toplevel->server->config.inner_gap);
+	workspace_arrange_on_output(old_ws, old_ws->output,
+		toplevel->server->config.inner_gap);
+	workspace_arrange_on_output(new_ws, new_ws->output,
+		toplevel->server->config.inner_gap);
 }
 
 void workspace_cycle_next(struct uwm_server *server)
@@ -206,16 +243,16 @@ void workspace_cycle_next(struct uwm_server *server)
 	if (ws->fullscreen_window)
 		return;
 
-	struct uwm_toplevel *windows[256];
+	struct uwm_toplevel *windows[UWM_MAX_WINDOWS];
 	int count = 0;
 
 	struct uwm_toplevel *tl;
 	wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-		if (count < 256 && !tl->is_transient)
+		if (count < UWM_MAX_WINDOWS && !tl->is_transient)
 			windows[count++] = tl;
 	}
 	wl_list_for_each(tl, &ws->floating_windows, floating_link) {
-		if (count < 256 && !tl->is_transient)
+		if (count < UWM_MAX_WINDOWS && !tl->is_transient)
 			windows[count++] = tl;
 	}
 
@@ -233,10 +270,12 @@ void workspace_cycle_next(struct uwm_server *server)
 	int next = (idx + 1) % count;
 	focus_toplevel(windows[next]);
 
-	if (ws->monocle) {
-		int x, y, out_w, out_h;
-		get_output_size(server, &x, &y, &out_w, &out_h);
-		bsp_arrange(ws, x, y, out_w, out_h, server->config.inner_gap);
+	if (ws->monocle && ws->output) {
+		bsp_arrange(ws, ws->output->usable_area.x,
+			ws->output->usable_area.y,
+			ws->output->usable_area.width,
+			ws->output->usable_area.height,
+			server->config.inner_gap);
 	}
 }
 
@@ -252,4 +291,15 @@ void workspace_next(struct uwm_server *server)
 	uint32_t current = server->workspaces.current;
 	uint32_t next = (current + 1) % UWM_WORKSPACE_COUNT;
 	workspace_switch(server, next);
+}
+
+struct uwm_output *workspace_get_output(struct uwm_workspace *ws)
+{
+	return ws->output;
+}
+
+struct uwm_workspace *workspace_for_output(struct uwm_server *server,
+		struct uwm_output *output)
+{
+	return &server->workspaces.workspaces[output->current_workspace];
 }

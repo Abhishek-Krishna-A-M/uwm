@@ -9,30 +9,62 @@
 #include "output.h"
 #include "layout.h"
 
+void bsp_pool_init(struct uwm_bsp_pool *pool)
+{
+	pool->freelist = NULL;
+	pool->count = 0;
+	for (int i = 0; i < BSP_POOL_SIZE; i++) {
+		pool->nodes[i].first = pool->freelist;
+		pool->freelist = &pool->nodes[i];
+	}
+}
+
+struct uwm_bsp_node *bsp_node_alloc(struct uwm_bsp_pool *pool)
+{
+	if (!pool->freelist)
+		return NULL;
+	struct uwm_bsp_node *node = pool->freelist;
+	pool->freelist = node->first;
+	node->first = NULL;
+	node->second = NULL;
+	node->parent = NULL;
+	node->toplevel = NULL;
+	node->ratio = 0.5f;
+	node->mode = UWM_NODE_BSP;
+	node->active_child = NULL;
+	node->x = node->y = node->width = node->height = 0;
+	return node;
+}
+
+void bsp_node_free(struct uwm_bsp_pool *pool, struct uwm_bsp_node *node)
+{
+	if (!node)
+		return;
+	node->first = pool->freelist;
+	pool->freelist = node;
+}
+
 static struct uwm_bsp_node *bsp_node_create(struct uwm_toplevel *toplevel)
 {
-	struct uwm_bsp_node *node = calloc(1, sizeof(*node));
+	struct uwm_bsp_node *node = bsp_node_alloc(&toplevel->server->bsp_pool);
 	if (!node)
 		return NULL;
 	node->toplevel = toplevel;
-	node->ratio = 0.5f;
-	node->mode = UWM_NODE_BSP;
 	return node;
 }
 
 static struct uwm_bsp_node *bsp_internal_create(
 	enum uwm_split split,
 	struct uwm_bsp_node *first,
-	struct uwm_bsp_node *second)
+	struct uwm_bsp_node *second,
+	struct uwm_bsp_pool *pool)
 {
-	struct uwm_bsp_node *node = calloc(1, sizeof(*node));
+	struct uwm_bsp_node *node = bsp_node_alloc(pool);
 	if (!node)
 		return NULL;
 	node->split = split;
-	node->ratio = 0.5f;
 	node->first = first;
 	node->second = second;
-	node->mode = UWM_NODE_BSP;
 	return node;
 }
 
@@ -144,11 +176,9 @@ static void bsp_arrange_node(
 		break;
 	}
 	case UWM_NODE_MONOCLE:
-		/* Only arrange the active child with the full area */
 		if (node->active_child) {
 			bsp_arrange_node_full(node->active_child, x, y, width, height);
 		} else {
-			/* Fallback: arrange first child if no active_child set */
 			bsp_arrange_node_full(node->first, x, y, width, height);
 		}
 		update_layout_visibility(node);
@@ -190,20 +220,22 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 {
 	if (workspace->root == NULL)
 		return;
+
+	/* Skip arrangement for hidden workspaces — they'll be arranged
+	 * when shown via output_set_workspace() / bsp_arrange_workspace(). */
+	if (!workspace->output)
+		return;
+
 	if (width < 1) width = 1;
 	if (height < 1) height = 1;
 
 	if (workspace->monocle && workspace->focused) {
-		/* In monocle mode: hide all non-focused tiled windows first,
-		 * then arrange only the focused window to fill the workspace. */
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
 			if (tl != workspace->focused && !tl->floating && !tl->fullscreen)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
-		/* Arrange the focused window to fill the full workspace */
 		bsp_arrange_node(workspace->root, x, y, width, height, gap);
-		/* Ensure focused window fills workspace regardless of tree arrangement */
 		wlr_scene_node_set_position(
 			&workspace->focused->scene_tree->node, x, y);
 		wlr_xdg_toplevel_set_size(
@@ -215,15 +247,15 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 	}
 }
 
-void bsp_destroy(struct uwm_bsp_node *node)
+void bsp_destroy(struct uwm_bsp_node *node, struct uwm_bsp_pool *pool)
 {
 	if (node == NULL)
 		return;
 	if (node->first)
-		bsp_destroy(node->first);
+		bsp_destroy(node->first, pool);
 	if (node->second)
-		bsp_destroy(node->second);
-	free(node);
+		bsp_destroy(node->second, pool);
+	bsp_node_free(pool, node);
 }
 
 struct uwm_bsp_node *bsp_insert(
@@ -254,9 +286,9 @@ struct uwm_bsp_node *bsp_insert(
 		node_mode = tabbed_parent->mode;
 
 	struct uwm_bsp_node *internal = bsp_internal_create(
-		split, focused_leaf, new_leaf);
+		split, focused_leaf, new_leaf, &toplevel->server->bsp_pool);
 	if (!internal) {
-		free(new_leaf);
+		bsp_node_free(&toplevel->server->bsp_pool, new_leaf);
 		return NULL;
 	}
 	internal->mode = node_mode;
@@ -318,16 +350,17 @@ void bsp_restore(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 	struct uwm_bsp_node *sib_parent = sibling->parent;
 	bool sib_is_first = (sib_parent && sib_parent->first == sibling);
 
+	struct uwm_bsp_pool *pool = &toplevel->server->bsp_pool;
 	struct uwm_bsp_node *internal;
 	if (toplevel->bsp_saved_is_second) {
 		internal = bsp_internal_create(
-			toplevel->bsp_saved_split, sibling, new_leaf);
+			toplevel->bsp_saved_split, sibling, new_leaf, pool);
 	} else {
 		internal = bsp_internal_create(
-			toplevel->bsp_saved_split, new_leaf, sibling);
+			toplevel->bsp_saved_split, new_leaf, sibling, pool);
 	}
 	if (!internal) {
-		free(new_leaf);
+		bsp_node_free(pool, new_leaf);
 		return;
 	}
 	internal->ratio = toplevel->bsp_saved_ratio;
@@ -370,10 +403,11 @@ void bsp_remove(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 	workspace->tree_gen++;
 
 	struct uwm_bsp_node *parent = leaf->parent;
+	struct uwm_bsp_pool *pool = &toplevel->server->bsp_pool;
 
 	if (parent == NULL) {
 		workspace->root = NULL;
-		free(leaf);
+		bsp_node_free(pool, leaf);
 		return;
 	}
 
@@ -399,8 +433,8 @@ void bsp_remove(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 		grandparent->second = sibling;
 	}
 
-	free(parent);
-	free(leaf);
+	bsp_node_free(pool, parent);
+	bsp_node_free(pool, leaf);
 }
 
 void bsp_collect_leaves(
@@ -433,44 +467,40 @@ struct uwm_bsp_node *bsp_find_tabbed_parent(
 	return NULL;
 }
 
-void get_output_size(struct uwm_server *server, int *x, int *y, int *w, int *h)
+void get_output_size(struct uwm_workspace *ws,
+		int *x, int *y, int *w, int *h)
 {
-	struct wlr_output_layout *layout = server->output_layout;
-	struct wlr_output_layout_output *lo;
-	*x = 0;
-	*y = 0;
-	*w = 0;
-	*h = 0;
-	wl_list_for_each(lo, &layout->outputs, link) {
-		struct wlr_output *output = lo->output;
-		if (output->enabled) {
-			/* Find the matching uwm_output for usable area */
-			struct uwm_output *uwm_out;
-			wl_list_for_each(uwm_out, &server->outputs, link) {
-				if (uwm_out->wlr_output == output) {
-					*x = uwm_out->usable_area.x;
-					*y = uwm_out->usable_area.y;
-					*w = uwm_out->usable_area.width;
-					*h = uwm_out->usable_area.height;
-					return;
-				}
+	struct uwm_output *output = ws->output;
+	if (output) {
+		*x = output->usable_area.x;
+		*y = output->usable_area.y;
+		*w = output->usable_area.width;
+		*h = output->usable_area.height;
+	} else {
+		/* Fallback: use first available output */
+		struct uwm_server *server = ws->focused
+			? ws->focused->server : NULL;
+		if (server) {
+			struct uwm_output *first = output_first(server);
+			if (first) {
+				*x = first->usable_area.x;
+				*y = first->usable_area.y;
+				*w = first->usable_area.width;
+				*h = first->usable_area.height;
+				return;
 			}
-			/* Fallback: no usable area set yet, use raw dimensions */
-			*w = output->width;
-			*h = output->height;
-			return;
 		}
+		*x = 0; *y = 0; *w = 0; *h = 0;
 	}
 }
 
 void bsp_arrange_workspace(struct uwm_workspace *workspace)
 {
-	struct uwm_server *server = workspace->focused
-		? workspace->focused->server : NULL;
-	if (!server) return;
 	int x, y, w, h;
-	get_output_size(server, &x, &y, &w, &h);
-	bsp_arrange(workspace, x, y, w, h, server->config.inner_gap);
+	get_output_size(workspace, &x, &y, &w, &h);
+	struct uwm_output *output = workspace->output;
+	int gap = output ? output->server->config.inner_gap : 0;
+	bsp_arrange(workspace, x, y, w, h, gap);
 }
 
 static struct uwm_bsp_node *bsp_nearest_in_direction(
@@ -486,8 +516,8 @@ static struct uwm_bsp_node *bsp_nearest_in_direction(
 	float f_bottom = f_top + focused_leaf->height;
 
 	int count = 0;
-	struct uwm_bsp_node *leaves[256];
-	bsp_collect_leaves(workspace->root, leaves, &count, 256);
+	struct uwm_bsp_node *leaves[UWM_MAX_WINDOWS];
+	bsp_collect_leaves(workspace->root, leaves, &count, UWM_MAX_WINDOWS);
 
 	struct uwm_bsp_node *best = NULL;
 	float best_dist = INFINITY;

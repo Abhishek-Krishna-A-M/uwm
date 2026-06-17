@@ -81,7 +81,7 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 
 	if (rule->set_floating && !toplevel->floating) {
 		int out_x, out_y, out_w, out_h;
-		get_output_size(toplevel->server, &out_x, &out_y, &out_w, &out_h);
+		get_output_size(toplevel->workspace, &out_x, &out_y, &out_w, &out_h);
 
 		toplevel->float_width = (int)(out_w * floating_default_width_ratio);
 		toplevel->float_height = (int)(out_h * floating_default_height_ratio);

@@ -26,7 +26,7 @@ void toggle_floating(struct uwm_toplevel *window)
 		return;
 	struct uwm_workspace *ws = window->workspace;
 	int out_x, out_y, out_w, out_h;
-	get_output_size(window->server, &out_x, &out_y, &out_w, &out_h);
+	get_output_size(ws, &out_x, &out_y, &out_w, &out_h);
 
 	if (window->fullscreen)
 		return;
@@ -101,7 +101,7 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		return;
 	struct uwm_workspace *ws = window->workspace;
 	int out_x, out_y, out_w, out_h;
-	get_output_size(window->server, &out_x, &out_y, &out_w, &out_h);
+	get_output_size(ws, &out_x, &out_y, &out_w, &out_h);
 
 	if (!window->fullscreen) {
 		window->saved_floating = window->floating;
@@ -143,7 +143,6 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 			if (tl != window)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
-		/* Hide layer shell surfaces (bar, notifications) in fullscreen */
 		struct uwm_output *output;
 		wl_list_for_each(output, &window->server->outputs, link) {
 			wlr_scene_node_set_enabled(&output->layer_top->node, false);
@@ -162,7 +161,6 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		wl_list_for_each_safe(tl, tmp, &ws->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
-		/* Restore layer shell surfaces after exiting fullscreen */
 		struct uwm_output *output;
 		wl_list_for_each(output, &window->server->outputs, link) {
 			wlr_scene_node_set_enabled(&output->layer_top->node, true);
@@ -177,9 +175,9 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 			window->float_height = window->saved_height;
 			wl_list_remove(&window->floating_link);
 			wl_list_insert(&ws->floating_windows, &window->floating_link);
-wlr_scene_node_reparent(
-			&window->scene_tree->node,
-			window->server->floating_layer);
+			wlr_scene_node_reparent(
+				&window->scene_tree->node,
+				window->server->floating_layer);
 			wlr_scene_node_set_position(&window->scene_tree->node,
 				window->float_x, window->float_y);
 			wlr_xdg_toplevel_set_size(window->xdg_toplevel,
@@ -191,11 +189,9 @@ wlr_scene_node_reparent(
 				window->server->tiled_layer);
 		}
 
-	bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
+		bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
 
 		if (ws->focused == window)
 			focus_toplevel(window);
 	}
 }
-
-

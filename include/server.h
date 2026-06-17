@@ -45,6 +45,7 @@ struct uwm_server {
 	struct wlr_scene_tree *tiled_layer;
 	struct wlr_scene_tree *floating_layer;
 	struct wlr_scene_output_layout *scene_layout;
+	struct uwm_bsp_pool bsp_pool;
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wl_listener new_xdg_toplevel;
@@ -76,15 +77,19 @@ struct uwm_server {
 	double grab_x, grab_y;
 	struct wlr_box grab_geobox;
 	uint32_t resize_edges;
+	uint32_t last_button_serial;
 
 	struct wlr_output_layout *output_layout;
 	struct wl_list outputs;
 	struct wl_listener new_output;
+	struct wl_listener output_layout_change;
+
+	struct uwm_output *active_output;          /* output with keyboard focus */
 
 	struct uwm_workspace_manager workspaces;
 	struct wlr_session *session;
 	struct uwm_config config;
-	uint32_t last_button_serial;
+
 
 	/* Layer shell support */
 	struct uwm_layer_shell layer_shell;
@@ -108,6 +113,10 @@ struct uwm_server {
 	/* Transient seat protocol support */
 	struct wlr_transient_seat_manager_v1 *transient_seat_manager;
 	struct wl_listener transient_seat_create;
+
+	/* UWM bar protocol */
+	struct uwm_bar_manager *bar_manager;
+	struct wl_event_source *bar_idle_source;
 };
 
 bool server_init(struct uwm_server *server);

@@ -16,6 +16,11 @@ struct uwm_keyboard {
 	xkb_keysym_t repeat_sym;
 	uint32_t repeat_keycode;
 
+	xkb_mod_mask_t cached_ctrl;
+	xkb_mod_mask_t cached_alt;
+	xkb_mod_mask_t cached_logo;
+	xkb_mod_mask_t cached_shift;
+
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener destroy;
