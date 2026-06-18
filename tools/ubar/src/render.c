@@ -211,6 +211,7 @@ void render_frame(State *state) {
 
 	// === RIGHT: status items ===
 	char keys_str[64] = {0};
+	char hdmi_str[16] = {0};
 	char mem_str[MAX_STR] = {0};
 	char vol_str[MAX_STR] = {0};
 	char bat_str[MAX_STR] = {0};
@@ -220,6 +221,8 @@ void render_frame(State *state) {
 		strcat(keys_str, "[CAPS] ");
 	if (state->num)
 		strcat(keys_str, "[NUM] ");
+	if (state->hdmi)
+		snprintf(hdmi_str, sizeof(hdmi_str), "[HDMI]");
 
 	// System metrics v3 Nerd Font updates
 	if (state->ram_detailed) {
@@ -258,6 +261,7 @@ void render_frame(State *state) {
 		{ bat_str,         ZONE_NONE,    state->bat_pct > 0 && state->bat_pct < 20 && !state->charging ? WARNING_COLOR : state->fg_color },
 		{ vol_str,         ZONE_VOLUME,  state->fg_color },
 		{ mem_str,         ZONE_RAM,     state->ram_pct > 85 ? WARNING_COLOR : state->fg_color },
+		{ hdmi_str,        ZONE_NONE,    state->fg_color },
 		{ keys_str,        ZONE_NONE,    WARNING_COLOR },
 	};
 	int item_count = sizeof(items) / sizeof(items[0]);

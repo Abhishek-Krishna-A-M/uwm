@@ -182,28 +182,32 @@ void data_update_hdmi(State *state) {
 void data_update_locks(State *state) {
 	state->caps = false;
 	state->num = false;
-	char buf[8];
-	FILE *f;
 
-	f = fopen("/sys/class/leds/input3::capslock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input2::capslock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input1::capslock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input0::capslock/brightness", "r");
-	if (f) {
-		if (fgets(buf, sizeof(buf), f))
-			state->caps = (buf[0] == '1');
-		fclose(f);
-	}
+	DIR *d = opendir("/sys/class/leds");
+	if (!d) return;
 
-	f = fopen("/sys/class/leds/input3::numlock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input2::numlock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input1::numlock/brightness", "r");
-	if (!f) f = fopen("/sys/class/leds/input0::numlock/brightness", "r");
-	if (f) {
+	struct dirent *ent;
+	while ((ent = readdir(d)) != NULL) {
+		if (ent->d_name[0] == '.') continue;
+
+		char path[512];
+		snprintf(path, sizeof(path), "/sys/class/leds/%s/brightness", ent->d_name);
+
+		FILE *f = fopen(path, "r");
+		if (!f) continue;
+
+		char buf[8];
+		int on = 0;
 		if (fgets(buf, sizeof(buf), f))
-			state->num = (buf[0] == '1');
+			on = (buf[0] == '1');
 		fclose(f);
+
+		if (strstr(ent->d_name, "::capslock"))
+			state->caps = on;
+		else if (strstr(ent->d_name, "::numlock"))
+			state->num = on;
 	}
+	closedir(d);
 }
 
 /* --- Network: direct sysfs reads, no popen --- */
@@ -343,36 +347,39 @@ void data_update_network(void) {
 
 /* --- Volume: runs in background thread to avoid blocking main --- */
 
-void data_update_volume(void) {
-	char buf[256];
-	int vol = g_vol_pct;
-	bool muted = g_muted;
+bool data_update_volume(void) {
+	char buf[64];
+	int vol = 0;
+	bool muted = false;
 
-	LOG("fetching volume via pactl...");
-	FILE *f = popen("pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null && pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null", "r");
+	LOG("fetching volume via wpctl...");
+	FILE *f = popen("wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null", "r");
 	if (f) {
-		while (fgets(buf, sizeof(buf), f)) {
-			if (strstr(buf, "%")) {
-				char *p = strstr(buf, "%");
-				if (p) {
-					while (p > buf && *(p-1) != ' ') p--;
-					int v = 0;
-					if (sscanf(p, "%d%%", &v) == 1)
-						vol = v;
+		if (fgets(buf, sizeof(buf), f)) {
+			/* Parse "Volume: 0.75\n" or "Volume: 0.75 [MUTED]\n" */
+			char *p = strstr(buf, "Volume:");
+			if (p) {
+				p += 7;
+				while (*p == ' ') p++;
+				float v;
+				if (sscanf(p, "%f", &v) == 1) {
+					vol = (int)(v * 100.0f + 0.5f);
+					if (vol > 100) vol = 100;
+					if (vol < 0) vol = 0;
 				}
 			}
-			if (strstr(buf, "Mute:")) {
-				muted = strstr(buf, "yes") != NULL;
-			}
+			muted = strstr(buf, "[MUTED]") != NULL;
 		}
 		pclose(f);
-		LOG("pactl returned: vol=%d%% muted=%d", vol, muted);
+		LOG("wpctl returned: vol=%d%% muted=%d", vol, muted);
 	} else {
-		LOG("pactl popen FAILED: %s", strerror(errno));
+		LOG("wpctl popen FAILED: %s", strerror(errno));
 	}
 
+	bool changed = (vol != g_vol_pct) || (muted != g_muted);
 	g_vol_pct = vol;
 	g_muted = muted;
+	return changed;
 }
 
 /* --- Sync globals to state (called from main thread after pipe notify) --- */
@@ -439,44 +446,18 @@ static void *audio_monitor(void *arg) {
 	State *state = (State *)arg;
 	LOG("audio monitor thread started");
 
-	for (int retry = 0; retry < 30 && state->running; retry++) {
-		data_update_volume();
-		write(state->notify_fds[1], "a", 1);
-		LOG("audio monitor: initial volume fetch done (vol=%d muted=%d)", g_vol_pct, g_muted);
+	data_update_volume();
+	write(state->notify_fds[1], "a", 1);
+	LOG("audio monitor: initial volume fetch done (vol=%d muted=%d)", g_vol_pct, g_muted);
 
-		FILE *f = popen("pactl subscribe 2>/dev/null", "r");
-		if (!f) {
-			LOG("audio monitor: pactl subscribe FAILED (retry %d/30)", retry + 1);
-			struct timespec ts = { .tv_sec = 2, .tv_nsec = 0 };
-			nanosleep(&ts, NULL);
-			continue;
-		}
-		LOG("audio monitor: pactl subscribe OK");
-
-		char buf[256];
-		struct timespec last_update = {0, 0};
-		while (fgets(buf, sizeof(buf), f)) {
-			if (!state->running) break;
-			if (strstr(buf, "sink") || strstr(buf, "server")) {
-				struct timespec now;
-				clock_gettime(CLOCK_MONOTONIC, &now);
-				long diff_ms = (now.tv_sec - last_update.tv_sec) * 1000 +
-				               (now.tv_nsec - last_update.tv_nsec) / 1000000;
-				if (diff_ms < 50) continue;
-				clock_gettime(CLOCK_MONOTONIC, &last_update);
-				LOG("audio event: %s", buf);
-				data_update_volume();
-				write(state->notify_fds[1], "a", 1);
-			}
-		}
-		pclose(f);
-		LOG("audio monitor: pactl subscribe exited, retrying...");
-
-		if (state->running) {
-			struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
-			nanosleep(&ts, NULL);
-		}
+	while (state->running) {
+		struct timespec ts = { .tv_sec = 0, .tv_nsec = 200000000 };
+		nanosleep(&ts, NULL);
+		if (!state->running) break;
+		if (data_update_volume())
+			write(state->notify_fds[1], "a", 1);
 	}
+
 	LOG("audio monitor thread exiting");
 	return NULL;
 }

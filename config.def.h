@@ -40,9 +40,9 @@
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
 #define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL
-#define VOLUP       "sh", "-c", "pactl set-sink-volume @DEFAULT_SINK@ +5%", NULL
-#define VOLDOWN     "sh", "-c", "pactl set-sink-volume @DEFAULT_SINK@ -5%", NULL
-#define VOLMUTE     "sh", "-c", "pactl set-sink-mute @DEFAULT_SINK@ toggle", NULL
+#define VOLUP       "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05+", NULL
+#define VOLDOWN     "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05-", NULL
+#define VOLMUTE     "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", NULL
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
 
@@ -149,6 +149,7 @@
 #define AUTOSTART \
 	"pipewire", \
 	"wireplumber", \
+	"mkdir -p \"$XDG_RUNTIME_DIR/pulse\" && while [ ! -S \"$XDG_RUNTIME_DIR/pipewire-0\" ]; do sleep 0.1; done; exec pipewire-pulse", \
 	"foot --server", \
 	"mako", \
 	"ubar", \

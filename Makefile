@@ -21,7 +21,7 @@ CFLAGS = -g -fsanitize=address -fno-omit-frame-pointer -O0
 LDFLAGS = -fsanitize=address
 $(info Building with AddressSanitizer)
 else
-CFLAGS = -O2 -DNDEBUG
+CFLAGS = -O2 -DNDEBUG -march=native
 LDFLAGS =
 endif
 

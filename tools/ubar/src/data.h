@@ -18,7 +18,7 @@ void data_update_memory(State *state);
 void data_update_battery(State *state);
 void data_update_hdmi(State *state);
 void data_update_locks(State *state);
-void data_update_volume(void);
+bool data_update_volume(void);
 void data_update_network(void);
 void data_sync_to_state(State *state);
 void data_update_all_timer(State *state);

@@ -68,7 +68,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	/* Update active output to the one displaying this workspace */
 	if (ws->output) {
 		server->active_output = ws->output;
-		server->workspaces.current = ws->id;
 	}
 
 	/* Update tabbed/monocle container active_child */
