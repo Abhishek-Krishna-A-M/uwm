@@ -57,12 +57,12 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 
 	case ZONE_VOLUME:
 		if (fork() == 0) {
-			execlp("pactl", "pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle", NULL);
+			execlp("wpctl", "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL);
 			_exit(0);
 		}
 		/* Don't call data_update_volume() here — it uses popen() on the main thread.
-		 * The audio_monitor thread will detect the change via 'pactl subscribe'. */
-		LOG("volume toggle: forked pactl, waiting for subscribe callback");
+		 * The audio_monitor thread will detect the change via polling. */
+		LOG("volume toggle: forked wpctl, waiting for monitor poll");
 		break;
 
 	case ZONE_NETWORK:
@@ -97,17 +97,17 @@ static void pointer_axis(void *data, struct wl_pointer *wl_pointer,
 
 	if (val > 0) {
 		if (fork() == 0) {
-			execlp("pactl", "pactl", "set-sink-volume", "@DEFAULT_SINK@", "-5%", NULL);
+			execlp("wpctl", "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.05-", NULL);
 			_exit(0);
 		}
 	} else {
 		if (fork() == 0) {
-			execlp("pactl", "pactl", "set-sink-volume", "@DEFAULT_SINK@", "+5%", NULL);
+			execlp("wpctl", "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.05+", NULL);
 			_exit(0);
 		}
 	}
 	/* Don't call data_update_volume() here — let audio_monitor thread handle it. */
-	LOG("volume scroll: forked pactl, waiting for subscribe callback");
+	LOG("volume scroll: forked wpctl, waiting for monitor poll");
 }
 
 static void pointer_frame(void *data, struct wl_pointer *wl_pointer) {}

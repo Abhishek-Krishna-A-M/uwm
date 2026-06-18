@@ -5,4 +5,4 @@
 
 export XDG_CURRENT_DESKTOP=wlroots
 
-exec dbus-run-session ./uwm
+exec dbus-run-session uwm
