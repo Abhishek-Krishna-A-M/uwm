@@ -6,6 +6,7 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include "server.h"
 
 #define UWM_TOPLEVEL_POOL_SIZE 256
@@ -37,6 +38,8 @@ struct uwm_toplevel {
 
 	/* --- screen sharing (lazy) --- */
 	struct wlr_ext_foreign_toplevel_handle_v1 *ext_foreign_toplevel;
+	struct wlr_foreign_toplevel_handle_v1 *foreign_toplevel;
+	struct wlr_scene *image_capture_scene;
 
 	/* --- flags packed together --- */
 	unsigned int floating : 1;
@@ -55,6 +58,8 @@ struct uwm_toplevel {
 	struct wl_listener request_resize;
 	struct wl_listener request_maximize;
 	struct wl_listener request_fullscreen;
+	struct wl_listener foreign_toplevel_request_activate;
+	struct wl_listener foreign_toplevel_request_close;
 	struct wl_listener decoration_destroy;
 	struct wl_listener decoration_request_mode;
 };

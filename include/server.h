@@ -19,6 +19,7 @@
 #include <wlr/types/wlr_ext_image_copy_capture_v1.h>
 #include <wlr/types/wlr_ext_image_capture_source_v1.h>
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
@@ -26,6 +27,7 @@
 #include "workspace.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
+#include "session_lock.h"
 
 /* Forward declaration to break circular dependency */
 struct uwm_toplevel;
@@ -89,7 +91,7 @@ struct uwm_server {
 	struct uwm_workspace_manager workspaces;
 	struct wlr_session *session;
 	struct uwm_config config;
-
+	bool locked;                              /* session lock active */
 
 	/* Layer shell support */
 	struct uwm_layer_shell layer_shell;
@@ -104,9 +106,13 @@ struct uwm_server {
 	struct wlr_ext_image_copy_capture_manager_v1 *ext_image_copy_capture_manager;
 	struct wlr_ext_output_image_capture_source_manager_v1 *output_capture_source_manager;
 	struct wlr_ext_foreign_toplevel_list_v1 *foreign_toplevel_list;
+	struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_manager;
 	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1 *foreign_toplevel_capture_source_manager;
 	struct wl_listener new_foreign_toplevel_capture_request;
 	struct wl_listener new_capture_session;
+	struct wlr_output_manager_v1 *output_manager_v1;
+	struct wl_listener output_manager_apply;
+	struct wl_listener output_manager_test;
 	struct wlr_export_dmabuf_manager_v1 *export_dmabuf_manager;
 	struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1;
 
@@ -117,6 +123,9 @@ struct uwm_server {
 	/* UWM bar protocol */
 	struct uwm_bar_manager *bar_manager;
 	struct wl_event_source *bar_idle_source;
+
+	/* Session lock protocol */
+	struct uwm_session_lock session_lock;
 };
 
 bool server_init(struct uwm_server *server);

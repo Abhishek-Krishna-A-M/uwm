@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <errno.h>
 #include <wlr/util/log.h>
 #include "server.h"
@@ -80,8 +81,32 @@ static void spawn_cmd(const char *cmd)
 	}
 }
 
+static void clean_pid_dir(void)
+{
+	ensure_pid_dir();
+	DIR *dir = opendir(pid_dir);
+	if (!dir) return;
+
+	struct dirent *entry;
+	while ((entry = readdir(dir)) != NULL) {
+		if (entry->d_type != DT_REG)
+			continue;
+		size_t len = strlen(entry->d_name);
+		if (len < 4 || strcmp(entry->d_name + len - 4, ".pid") != 0)
+			continue;
+
+		char path[128];
+		snprintf(path, sizeof(path), "%s/%s", pid_dir, entry->d_name);
+		int pid = read_pid(path);
+		if (!pid_alive(pid))
+			unlink(path);
+	}
+	closedir(dir);
+}
+
 static void run_autostart(void)
 {
+	clean_pid_dir();
 	for (const char *const *cmd = autostart; *cmd; cmd++)
 		spawn_cmd(*cmd);
 }

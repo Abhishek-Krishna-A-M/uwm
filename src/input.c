@@ -376,6 +376,10 @@ static int keyboard_repeat_handler(void *data) {
 	struct uwm_keyboard *keyboard = data;
 	struct uwm_server *server = keyboard->server;
 
+	if (server->locked) {
+		return 0;
+	}
+
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
 	if (!(modifiers & WLR_MODIFIER_LOGO)) {
 		wl_event_source_timer_update(keyboard->repeat_timer, 0);
@@ -482,6 +486,16 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 				handled = true;
 			}
 		}
+	}
+
+	/* While locked, skip all keybindings and forward keys to the seat */
+	if (server->locked) {
+		if (!handled) {
+			wlr_seat_set_keyboard(seat, keyboard->wlr_keyboard);
+			wlr_seat_keyboard_notify_key(seat, event->time_msec,
+				event->keycode, event->state);
+		}
+		return;
 	}
 
 	if (!handled && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -744,6 +758,10 @@ static void process_cursor_resize(struct uwm_server *server) {
 }
 
 static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
+	if (server->locked) {
+		reset_cursor_mode(server);
+	}
+
 	if (server->cursor_mode == UWM_CURSOR_MOVE) {
 		process_cursor_move(server);
 		return;
