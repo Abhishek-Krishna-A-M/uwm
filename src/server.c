@@ -34,27 +34,23 @@ static void handle_renderer_lost(struct wl_listener *listener, void *data) {
 static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, new_foreign_toplevel_capture_request);
 	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;
+	struct uwm_toplevel *toplevel = request->toplevel_handle->data;
 
-	struct uwm_toplevel *toplevel;
-	wl_list_for_each(toplevel, &server->toplevels, link) {
-		if (toplevel->ext_foreign_toplevel == request->toplevel_handle) {
-			struct wlr_ext_image_capture_source_v1 *source =
-				wlr_ext_image_capture_source_v1_create_with_scene_node(
-					&toplevel->scene_tree->node,
-					wl_display_get_event_loop(server->wl_display),
-					server->allocator,
-					server->renderer);
-			if (source) {
-				wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
-					request, source);
-			} else {
-				wlr_log(WLR_ERROR, "Failed to create capture source for toplevel");
-			}
-			return;
-		}
+	if (!toplevel)
+		return;
+
+	struct wlr_ext_image_capture_source_v1 *source =
+		wlr_ext_image_capture_source_v1_create_with_scene_node(
+			&toplevel->image_capture_scene->tree.node,
+			wl_display_get_event_loop(server->wl_display),
+			server->allocator,
+			server->renderer);
+	if (source) {
+		wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+			request, source);
+	} else {
+		wlr_log(WLR_ERROR, "Failed to create capture source for toplevel");
 	}
-
-	wlr_log(WLR_ERROR, "Foreign toplevel capture request for unknown handle");
 }
 
 static void handle_new_capture_session(struct wl_listener *listener, void *data) {
@@ -84,6 +80,55 @@ static void handle_transient_seat_create(struct wl_listener *listener, void *dat
 	} else {
 		wlr_transient_seat_v1_deny(transient_seat);
 	}
+}
+
+static void handle_output_manager_apply(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, output_manager_apply);
+	struct wlr_output_configuration_v1 *config = data;
+
+	struct wlr_output_configuration_head_v1 *config_head;
+	wl_list_for_each(config_head, &config->heads, link) {
+		struct wlr_output *wlr_output = config_head->state.output;
+		struct wlr_output_state state;
+		wlr_output_state_init(&state);
+		wlr_output_head_v1_state_apply(&config_head->state, &state);
+		wlr_output_commit_state(wlr_output, &state);
+		wlr_output_state_finish(&state);
+	}
+
+	wl_list_for_each(config_head, &config->heads, link) {
+		struct wlr_output *wlr_output = config_head->state.output;
+		wlr_output_layout_add(server->output_layout, wlr_output,
+			config_head->state.x, config_head->state.y);
+	}
+
+	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
+	wlr_output_configuration_v1_send_succeeded(config);
+}
+
+static void handle_output_manager_test(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, output_manager_test);
+	struct wlr_output_configuration_v1 *config = data;
+
+	struct wlr_output_configuration_head_v1 *config_head;
+	bool ok = true;
+	wl_list_for_each(config_head, &config->heads, link) {
+		struct wlr_output *wlr_output = config_head->state.output;
+		struct wlr_output_state state;
+		wlr_output_state_init(&state);
+		wlr_output_head_v1_state_apply(&config_head->state, &state);
+		if (!wlr_output_test_state(wlr_output, &state)) {
+			ok = false;
+			wlr_output_state_finish(&state);
+			break;
+		}
+		wlr_output_state_finish(&state);
+	}
+
+	if (ok)
+		wlr_output_configuration_v1_send_succeeded(config);
+	else
+		wlr_output_configuration_v1_send_failed(config);
 }
 
 bool server_init(struct uwm_server *server) {
@@ -264,7 +309,13 @@ bool server_init(struct uwm_server *server) {
 
 	/* Set up output management and xdg-output protocol. These allow clients
 	 * like slurp and grim to query the output layout (position, size, scale). */
-	wlr_output_manager_v1_create(server->wl_display);
+	server->output_manager_v1 = wlr_output_manager_v1_create(server->wl_display);
+	server->output_manager_apply.notify = handle_output_manager_apply;
+	wl_signal_add(&server->output_manager_v1->events.apply,
+		&server->output_manager_apply);
+	server->output_manager_test.notify = handle_output_manager_test;
+	wl_signal_add(&server->output_manager_v1->events.test,
+		&server->output_manager_test);
 	if (!wlr_xdg_output_manager_v1_create(server->wl_display, server->output_layout)) {
 		wlr_log(WLR_ERROR, "Failed to create xdg-output manager");
 	}
@@ -344,6 +395,14 @@ bool server_init(struct uwm_server *server) {
 		return false;
 	}
 
+	/* Initialize session lock protocol */
+	if (!session_lock_create(server)) {
+		wlr_log(WLR_ERROR, "Failed to create session lock");
+		idle_inhibit_destroy(server);
+		layer_shell_destroy(server);
+		return false;
+	}
+
 	/* Initialize screencopy protocol */
 	server->screencopy_manager = wlr_screencopy_manager_v1_create(server->wl_display);
 	if (!server->screencopy_manager) {
@@ -396,6 +455,13 @@ bool server_init(struct uwm_server *server) {
 		wlr_log(WLR_ERROR, "Failed to create ext foreign toplevel list");
 	}
 
+	/* Legacy foreign toplevel management — used by wlrctl and other tools */
+	server->foreign_toplevel_manager =
+		wlr_foreign_toplevel_manager_v1_create(server->wl_display);
+	if (!server->foreign_toplevel_manager) {
+		wlr_log(WLR_ERROR, "Failed to create foreign toplevel manager");
+	}
+
 	/* Foreign toplevel image capture source — lets portal/clients select a
 	 * specific window for per-window screen sharing. */
 	server->foreign_toplevel_capture_source_manager =
@@ -417,9 +483,10 @@ void server_finish(struct uwm_server *server) {
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
 
-	/* Clean up layer shell, idle inhibit, screencopy, and bar */
+	/* Clean up layer shell, idle inhibit, session lock, screencopy, and bar */
 	layer_shell_destroy(server);
 	idle_inhibit_destroy(server);
+	session_lock_destroy(server);
 	uwm_bar_manager_destroy(server);
 
 	config_finish(&server->config);

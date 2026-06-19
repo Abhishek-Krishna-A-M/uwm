@@ -1,7 +1,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include "layer_shell.h"
@@ -29,6 +31,12 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 	wlr_output_commit_state(output->wlr_output, event->state);
 
 	layer_surface_arrange(output);
+
+	/* Reconfigure lock surface if output size changed */
+	if (output->lock_surface) {
+		wlr_session_lock_surface_v1_configure(output->lock_surface,
+			output->wlr_output->width, output->wlr_output->height);
+	}
 
 	/* Rearrange the workspace displayed on this output */
 	struct uwm_workspace *ws = &output->server->workspaces.workspaces[output->current_workspace];
@@ -93,7 +101,10 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 		wlr_scene_node_destroy(&output->layer_top->node);
 	if (output->layer_overlay)
 		wlr_scene_node_destroy(&output->layer_overlay->node);
+	if (output->layer_lock)
+		wlr_scene_node_destroy(&output->layer_lock->node);
 
+	output_manager_update(server);
 	free(output);
 }
 
@@ -106,7 +117,16 @@ void handle_output_layout_change(struct wl_listener *listener, void *data) {
 		wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
 		output->lx = box.x;
 		output->ly = box.y;
+
+		/* Reposition lock surface if present */
+		if (output->lock_surface && output->lock_surface->surface->data) {
+			struct wlr_scene_tree *tree =
+				output->lock_surface->surface->data;
+			wlr_scene_node_set_position(&tree->node, box.x, box.y);
+		}
 	}
+
+	output_manager_update(server);
 }
 
 static uint32_t find_unused_workspace(struct uwm_server *server) {
@@ -187,6 +207,38 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id) {
 	uwm_bar_send_output(output);
 }
 
+void output_manager_update(struct uwm_server *server) {
+	if (!server->output_manager_v1)
+		return;
+
+	struct wlr_output_configuration_v1 *config =
+		wlr_output_configuration_v1_create();
+
+	struct uwm_output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		struct wlr_output_configuration_head_v1 *head =
+			wlr_output_configuration_head_v1_create(
+				config, output->wlr_output);
+		head->state.enabled = output->wlr_output->enabled;
+		if (output->wlr_output->current_mode) {
+			head->state.mode = output->wlr_output->current_mode;
+		} else {
+			head->state.custom_mode.width = output->wlr_output->width;
+			head->state.custom_mode.height = output->wlr_output->height;
+			head->state.custom_mode.refresh = output->wlr_output->refresh;
+		}
+		head->state.x = output->lx;
+		head->state.y = output->ly;
+		head->state.scale = output->wlr_output->scale;
+		head->state.transform = output->wlr_output->transform;
+		head->state.adaptive_sync_enabled =
+			output->wlr_output->adaptive_sync_status
+				== WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED;
+	}
+
+	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
+}
+
 void server_new_output(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, new_output);
 	struct wlr_output *wlr_output = data;
@@ -208,6 +260,7 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = calloc(1, sizeof(*output));
 	output->wlr_output = wlr_output;
 	output->server = server;
+	wlr_output->data = output;
 
 	/* Assign an unused workspace */
 	uint32_t ws_id = find_unused_workspace(server);
@@ -221,6 +274,7 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->layer_floating = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_top = wlr_scene_tree_create(&server->scene->tree);
 	output->layer_overlay = wlr_scene_tree_create(&server->scene->tree);
+	output->layer_lock = wlr_scene_tree_create(&server->scene->tree);
 
 	wlr_scene_node_place_below(&output->layer_background->node,
 		&server->tiled_layer->node);
@@ -232,6 +286,8 @@ void server_new_output(struct wl_listener *listener, void *data) {
 		&server->floating_layer->node);
 	wlr_scene_node_place_above(&output->layer_overlay->node,
 		&output->layer_top->node);
+	wlr_scene_node_place_above(&output->layer_lock->node,
+		&output->layer_overlay->node);
 
 	/* Set up listeners */
 	output->frame.notify = output_frame;
@@ -287,6 +343,8 @@ void server_new_output(struct wl_listener *listener, void *data) {
 			ws->toplevels.next, tl, workspace_link);
 		focus_toplevel(tl);
 	}
+
+	output_manager_update(server);
 
 	wlr_log(WLR_INFO, "New output: %s (%s) workspace=%u lx=%d ly=%d",
 		wlr_output->name,

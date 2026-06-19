@@ -24,19 +24,19 @@
 #define KEY_REPEAT_RATE 40
 #define TAP_TO_CLICK true
 #define NATURAL_SCROLL true
-#define ACCEL_PROFILE 0
+#define ACCEL_PROFILE 0.75
 
 #define MOD WLR_MODIFIER_LOGO
 
 /* spawnable command argv arrays (NULL-terminated) */
 #define TERM        "footclient", NULL
-#define LAUNCHER    "fuzzel", "--no-icons", "--prompt=\xef\x8c\xbb Apps: ", NULL
-#define RUN         "sh", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
+#define LAUNCHER    "fuzzel", "--no-icons", "--prompt=󰀻 Apps: ", NULL
+#define RUN         "sh", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy", NULL
 #define FILEMGR     "foot", "-e", "lf", NULL
-#define FINDFILE    "sh", "-c", "file=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt=\"\xef\x8f\x91 Find File: \"); [ -n \"$file\" ] || exit 0; file=\"$HOME/$file\"; foot -e sh -c \"cd \\\"$(dirname \\\"$(realpath \\\"$file\\\")\\\")\\\" && nvim \\\"$(realpath \\\"$file\\\")\\\" && exec $SHELL\"", NULL
+#define FINDFILE    "sh", "-c", "file=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt='󰈞 Find File: '); [ -n \"$file\" ] || exit 0; file=\"$HOME/$file\"; foot -e sh -c \"cd \\\"$(dirname \\\"$(realpath \\\"$file\\\")\\\")\\\" && nvim \\\"$(realpath \\\"$file\\\")\\\" && exec $SHELL\"", NULL
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
 #define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL
@@ -151,7 +151,6 @@
 	"wireplumber", \
 	"mkdir -p \"$XDG_RUNTIME_DIR/pulse\" && while [ ! -S \"$XDG_RUNTIME_DIR/pipewire-0\" ]; do sleep 0.1; done; exec pipewire-pulse", \
 	"foot --server", \
-	"mako", \
 	"ubar", \
 	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
 	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \

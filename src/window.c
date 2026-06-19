@@ -52,10 +52,15 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			struct wlr_scene_tree *prev_tree = prev_toplevel->base->data;
 			if (prev_tree) {
 				struct uwm_toplevel *prev = prev_tree->node.data;
-				if (prev && !prev->fullscreen) {
-					float dim = unfocus_dim;
-					wlr_scene_node_for_each_buffer(
-						&prev_tree->node, set_window_opacity, &dim);
+				if (prev) {
+					if (prev->foreign_toplevel)
+						wlr_foreign_toplevel_handle_v1_set_activated(
+							prev->foreign_toplevel, false);
+					if (!prev->fullscreen) {
+						float dim = unfocus_dim;
+						wlr_scene_node_for_each_buffer(
+							&prev_tree->node, set_window_opacity, &dim);
+					}
 				}
 			}
 		}
@@ -98,6 +103,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
+	if (toplevel->foreign_toplevel)
+		wlr_foreign_toplevel_handle_v1_set_activated(
+			toplevel->foreign_toplevel, true);
 	if (toplevel->decoration) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
@@ -209,6 +217,22 @@ bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 	return true;
 }
 
+static void handle_foreign_toplevel_request_activate(
+		struct wl_listener *listener, void *data) {
+	struct uwm_toplevel *toplevel = wl_container_of(
+		listener, toplevel, foreign_toplevel_request_activate);
+	workspace_switch(toplevel->server, toplevel->workspace->id);
+	focus_toplevel(toplevel);
+}
+
+static void handle_foreign_toplevel_request_close(
+		struct wl_listener *listener, void *data) {
+	struct uwm_toplevel *toplevel = wl_container_of(
+		listener, toplevel, foreign_toplevel_request_close);
+	if (toplevel && toplevel->xdg_toplevel)
+		wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+}
+
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
@@ -230,6 +254,30 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		toplevel->ext_foreign_toplevel =
 			wlr_ext_foreign_toplevel_handle_v1_create(
 				toplevel->server->foreign_toplevel_list, &state);
+		toplevel->ext_foreign_toplevel->data = toplevel;
+	}
+
+	if (toplevel->server->foreign_toplevel_manager) {
+		toplevel->foreign_toplevel =
+			wlr_foreign_toplevel_handle_v1_create(
+				toplevel->server->foreign_toplevel_manager);
+		wlr_foreign_toplevel_handle_v1_set_title(
+			toplevel->foreign_toplevel, toplevel->xdg_toplevel->title);
+		wlr_foreign_toplevel_handle_v1_set_app_id(
+			toplevel->foreign_toplevel, toplevel->xdg_toplevel->app_id);
+		if (toplevel->workspace && toplevel->workspace->output) {
+			wlr_foreign_toplevel_handle_v1_output_enter(
+				toplevel->foreign_toplevel,
+				toplevel->workspace->output->wlr_output);
+		}
+		toplevel->foreign_toplevel_request_activate.notify =
+			handle_foreign_toplevel_request_activate;
+		wl_signal_add(&toplevel->foreign_toplevel->events.request_activate,
+			&toplevel->foreign_toplevel_request_activate);
+		toplevel->foreign_toplevel_request_close.notify =
+			handle_foreign_toplevel_request_close;
+		wl_signal_add(&toplevel->foreign_toplevel->events.request_close,
+			&toplevel->foreign_toplevel_request_close);
 	}
 
 	if (!should_tile_toplevel(toplevel)) {
@@ -302,6 +350,13 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (toplevel->ext_foreign_toplevel) {
 		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
 		toplevel->ext_foreign_toplevel = NULL;
+	}
+
+	if (toplevel->foreign_toplevel) {
+		wl_list_remove(&toplevel->foreign_toplevel_request_activate.link);
+		wl_list_remove(&toplevel->foreign_toplevel_request_close.link);
+		wlr_foreign_toplevel_handle_v1_destroy(toplevel->foreign_toplevel);
+		toplevel->foreign_toplevel = NULL;
 	}
 
 	const char *app_id = toplevel->xdg_toplevel->app_id;
@@ -408,6 +463,13 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		wlr_ext_foreign_toplevel_handle_v1_update_state(
 			toplevel->ext_foreign_toplevel, &state);
 	}
+
+	if (toplevel->foreign_toplevel) {
+		wlr_foreign_toplevel_handle_v1_set_title(
+			toplevel->foreign_toplevel, toplevel->xdg_toplevel->title);
+		wlr_foreign_toplevel_handle_v1_set_app_id(
+			toplevel->foreign_toplevel, toplevel->xdg_toplevel->app_id);
+	}
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
@@ -416,6 +478,13 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	if (toplevel->ext_foreign_toplevel) {
 		wlr_ext_foreign_toplevel_handle_v1_destroy(toplevel->ext_foreign_toplevel);
 		toplevel->ext_foreign_toplevel = NULL;
+	}
+
+	if (toplevel->foreign_toplevel) {
+		wl_list_remove(&toplevel->foreign_toplevel_request_activate.link);
+		wl_list_remove(&toplevel->foreign_toplevel_request_close.link);
+		wlr_foreign_toplevel_handle_v1_destroy(toplevel->foreign_toplevel);
+		toplevel->foreign_toplevel = NULL;
 	}
 
 	wl_list_remove(&toplevel->map.link);
@@ -429,6 +498,11 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	if (toplevel->decoration) {
 		wl_list_remove(&toplevel->decoration_destroy.link);
 		wl_list_remove(&toplevel->decoration_request_mode.link);
+	}
+
+	if (toplevel->image_capture_scene) {
+		wlr_scene_node_destroy(&toplevel->image_capture_scene->tree.node);
+		toplevel->image_capture_scene = NULL;
 	}
 
 	struct uwm_workspace *ws = toplevel->workspace;
@@ -508,6 +582,13 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
+
+	/* Separate scene for per-window screen capture.
+	 * Using the main scene node captures everything at that position;
+	 * a dedicated scene captures only the window's own content. */
+	toplevel->image_capture_scene = wlr_scene_create();
+	toplevel->image_capture_scene->restack_xwayland_surfaces = false;
+	wlr_scene_xdg_surface_create(&toplevel->image_capture_scene->tree, xdg_toplevel->base);
 
 	toplevel->map.notify = xdg_toplevel_map;
 	wl_signal_add(&xdg_toplevel->base->surface->events.map, &toplevel->map);
