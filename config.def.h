@@ -161,7 +161,5 @@
 	{ .app_id = appid, .title = _title, .workspace = ws, \
 	  .set_floating = fl, .set_fullscreen = fs, \
 	  .has_opacity = op_en, .opacity = op_val }
-
-#define RULES \
-	RULE("*org.freedesktop.impl.portal*", NULL, 0, true, false, false, 0) \
-	/* no default rules */
+/* no default rules */
+#define RULES

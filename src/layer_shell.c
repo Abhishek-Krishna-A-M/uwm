@@ -271,9 +271,10 @@ static void handle_node_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&surface->new_popup.link);
 	wl_list_remove(&surface->node_destroy.link);
 
-	/* Clear data pointers to prevent dangling refs (ASan use-after-free) */
-	if (surface->layer_surface)
-		surface->layer_surface->data = NULL;
+	/* Clear scene node data pointer. Note: surface->layer_surface (the
+	 * wlr_layer_surface_v1) may already be freed at this point — the scene
+	 * node destroy event can fire after the wlr object is destroyed, so we
+	 * must NOT touch it here. */
 	if (surface->scene_node)
 		surface->scene_node->data = NULL;
 

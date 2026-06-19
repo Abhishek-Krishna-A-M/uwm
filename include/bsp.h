@@ -20,7 +20,6 @@ enum uwm_split {
 
 enum uwm_node_mode {
 	UWM_NODE_BSP,
-	UWM_NODE_TABBED,
 	UWM_NODE_MONOCLE,
 };
 

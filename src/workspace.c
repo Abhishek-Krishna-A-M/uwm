@@ -18,8 +18,7 @@ static void restore_container_visibility(struct uwm_bsp_node *node)
 	if (!node)
 		return;
 	if (node->first) {
-		if (node->mode == UWM_NODE_TABBED
-				|| node->mode == UWM_NODE_MONOCLE) {
+		if (node->mode == UWM_NODE_MONOCLE) {
 			update_layout_visibility(node);
 		}
 		restore_container_visibility(node->first);
@@ -65,12 +64,12 @@ static void workspace_hide(struct uwm_workspace *ws)
 			&ws->fullscreen_window->scene_tree->node, false);
 		return;
 	}
-	struct uwm_toplevel *toplevel, *tmp;
-	wl_list_for_each_safe(toplevel, tmp, &ws->toplevels, workspace_link)
+	struct uwm_toplevel *toplevel;
+	wl_list_for_each(toplevel, &ws->toplevels, workspace_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
-	wl_list_for_each_safe(toplevel, tmp, &ws->floating_windows, floating_link)
+	wl_list_for_each(toplevel, &ws->floating_windows, floating_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
 	}
@@ -97,8 +96,8 @@ static void workspace_show(struct uwm_workspace *ws)
 			&ws->fullscreen_window->scene_tree->node, true);
 		return;
 	}
-	struct uwm_toplevel *toplevel, *tmp;
-	wl_list_for_each_safe(toplevel, tmp, &ws->toplevels, workspace_link)
+	struct uwm_toplevel *toplevel;
+	wl_list_for_each(toplevel, &ws->toplevels, workspace_link)
 	{
 		if (ws->monocle) {
 			wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
@@ -107,7 +106,7 @@ static void workspace_show(struct uwm_workspace *ws)
 			wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
 		}
 	}
-	wl_list_for_each_safe(toplevel, tmp, &ws->floating_windows, floating_link)
+	wl_list_for_each(toplevel, &ws->floating_windows, floating_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
 	}
@@ -191,11 +190,11 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		wl_list_init(&toplevel->floating_link);
 	} else {
 		bsp_remove(old_ws, toplevel);
+		wl_list_remove(&toplevel->workspace_link);
+		wl_list_init(&toplevel->workspace_link);
 	}
 
-	wl_list_remove(&toplevel->workspace_link);
-	wl_list_insert(&new_ws->toplevels, &toplevel->workspace_link);
-	toplevel->workspace=new_ws;
+	toplevel->workspace = new_ws;
 
 	if (was_focused) {
 		old_ws->last_focused = NULL;
@@ -215,17 +214,21 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 	if (toplevel->floating) {
 		wl_list_insert(&new_ws->floating_windows, &toplevel->floating_link);
 	} else {
+		wl_list_insert(&new_ws->toplevels, &toplevel->workspace_link);
 		bsp_insert(new_ws, toplevel);
 	}
 
 	/* Only show if the target workspace is currently displayed on an output */
 	if (new_ws->output) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
-		new_ws->focused = toplevel;
-		focus_toplevel(toplevel);
+		if (!toplevel->is_transient) {
+			new_ws->focused = toplevel;
+			focus_toplevel(toplevel);
+		}
 	} else {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-		new_ws->focused = toplevel;
+		if (!toplevel->is_transient)
+			new_ws->focused = toplevel;
 	}
 
 	workspace_arrange_on_output(old_ws, old_ws->output,

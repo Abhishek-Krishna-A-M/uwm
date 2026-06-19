@@ -19,7 +19,6 @@ UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by 
 - Floating windows with pointer move and resize
 - Fullscreen mode
 - Monocle mode (workspace-level, preserves tree structure)
-- Tabbed containers (per-node, not global layout)
 - Focus movement in all directions
 - Window swap in all directions
 - Resize support (tiled ratio and floating dimensions)

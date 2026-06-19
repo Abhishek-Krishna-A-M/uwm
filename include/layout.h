@@ -7,10 +7,8 @@
 struct uwm_workspace;
 struct uwm_toplevel;
 
-void toggle_tabbed(struct uwm_workspace *workspace);
 void toggle_monocle(struct uwm_workspace *workspace);
 void set_bsp_mode(struct uwm_workspace *workspace);
-void cycle_layout_child(struct uwm_workspace *workspace);
 
 void update_layout_visibility(struct uwm_bsp_node *node);
 void set_children_visible(struct uwm_bsp_node *node, bool visible);
