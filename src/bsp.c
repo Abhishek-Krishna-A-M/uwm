@@ -169,12 +169,6 @@ static void bsp_arrange_node(
 	}
 
 	switch (node->mode) {
-	case UWM_NODE_TABBED: {
-		bsp_arrange_node_full(node->first, x, y, width, height);
-		bsp_arrange_node_full(node->second, x, y, width, height);
-		update_layout_visibility(node);
-		break;
-	}
 	case UWM_NODE_MONOCLE:
 		if (node->active_child) {
 			bsp_arrange_node_full(node->active_child, x, y, width, height);
@@ -280,20 +274,12 @@ struct uwm_bsp_node *bsp_insert(
 	if (!new_leaf)
 		return NULL;
 
-	enum uwm_node_mode node_mode = UWM_NODE_BSP;
-	struct uwm_bsp_node *tabbed_parent = bsp_find_tabbed_parent(focused_leaf);
-	if (tabbed_parent)
-		node_mode = tabbed_parent->mode;
-
 	struct uwm_bsp_node *internal = bsp_internal_create(
 		split, focused_leaf, new_leaf, &toplevel->server->bsp_pool);
 	if (!internal) {
 		bsp_node_free(&toplevel->server->bsp_pool, new_leaf);
 		return NULL;
 	}
-	internal->mode = node_mode;
-	if (node_mode != UWM_NODE_BSP && tabbed_parent)
-		internal->active_child = focused_leaf;
 
 	internal->parent = focused_leaf->parent;
 
@@ -318,8 +304,7 @@ static void bsp_fix_active_child(struct uwm_bsp_node *node,
 {
 	if (!node)
 		return;
-	if (node->mode != UWM_NODE_TABBED
-		&& node->mode != UWM_NODE_MONOCLE)
+	if (node->mode != UWM_NODE_MONOCLE)
 		return;
 	if (node->active_child == removed_leaf) {
 		if (replacement)
@@ -342,6 +327,9 @@ void bsp_restore(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 		bsp_insert(workspace, toplevel);
 		return;
 	}
+
+	for (int i = 0; i < toplevel->bsp_saved_depth && sibling->parent; i++)
+		sibling = sibling->parent;
 
 	struct uwm_bsp_node *new_leaf = bsp_node_create(toplevel);
 	if (!new_leaf)
@@ -367,14 +355,6 @@ void bsp_restore(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 	internal->mode = toplevel->bsp_saved_mode;
 	if (toplevel->bsp_saved_mode != UWM_NODE_BSP)
 		internal->active_child = sibling;
-
-	if (sib_parent == NULL) {
-		workspace->root = NULL;
-	} else if (sib_is_first) {
-		sib_parent->first = NULL;
-	} else {
-		sib_parent->second = NULL;
-	}
 
 	internal->parent = sib_parent;
 	new_leaf->parent = internal;
@@ -417,6 +397,9 @@ void bsp_remove(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 
 	bsp_fix_active_child(parent, leaf, sibling);
 
+	if (sibling->first)
+		sibling->split = parent->split;
+
 	struct uwm_bsp_node *cur = grandparent;
 	while (cur) {
 		bsp_fix_active_child(cur, leaf, sibling);
@@ -458,8 +441,7 @@ struct uwm_bsp_node *bsp_find_tabbed_parent(
 	if (leaf == NULL) return NULL;
 	struct uwm_bsp_node *node = leaf->parent;
 	while (node) {
-		if (node->mode == UWM_NODE_TABBED
-			|| node->mode == UWM_NODE_MONOCLE) {
+		if (node->mode == UWM_NODE_MONOCLE) {
 			return node;
 		}
 		node = node->parent;

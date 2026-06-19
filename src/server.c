@@ -320,6 +320,8 @@ bool server_init(struct uwm_server *server) {
 	 * images are available at all scale factors on the screen (necessary for
 	 * HiDPI support). */
 	server->cursor_mgr = wlr_xcursor_manager_create(NULL, 24);
+	wlr_xcursor_manager_load(server->cursor_mgr, 1);
+	wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 
 	/* wlr_cursor *only* displays an image on screen. It does not move around
 	 * when the pointer moves. However, we can attach input devices to it, and

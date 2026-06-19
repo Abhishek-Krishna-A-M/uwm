@@ -35,6 +35,7 @@ struct uwm_toplevel {
 	float bsp_saved_ratio;
 	enum uwm_split bsp_saved_split;
 	enum uwm_node_mode bsp_saved_mode;
+	int bsp_saved_depth;
 
 	/* --- screen sharing (lazy) --- */
 	struct wlr_ext_foreign_toplevel_handle_v1 *ext_foreign_toplevel;

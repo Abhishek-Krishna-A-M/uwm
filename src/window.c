@@ -75,7 +75,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		server->active_output = ws->output;
 	}
 
-	/* Update tabbed/monocle container active_child */
+	/* Update monocle container active_child */
 	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
 		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
 		if (leaf) {
@@ -280,6 +280,9 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 			&toplevel->foreign_toplevel_request_close);
 	}
 
+	int x, y, w, h;
+	get_output_size(toplevel->workspace, &x, &y, &w, &h);
+
 	if (!should_tile_toplevel(toplevel)) {
 		goto float_window;
 	}
@@ -295,8 +298,6 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		bsp_insert(toplevel->workspace, toplevel);
 	}
 
-	int x, y, w, h;
-	get_output_size(toplevel->workspace, &x, &y, &w, &h);
 	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
@@ -313,18 +314,15 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 float_window:
 	/* Float dialogs, transients, and rule-floated windows */
-	if (!toplevel->floating) {
-		int out_x, out_y, out_w, out_h;
-		get_output_size(toplevel->workspace, &out_x, &out_y, &out_w, &out_h);
-
-		toplevel->float_width = (int)(out_w * floating_default_width_ratio);
-		toplevel->float_height = (int)(out_h * floating_default_height_ratio);
+	if (!toplevel->floating && !toplevel->fullscreen) {
+		toplevel->float_width = (int)(w * floating_default_width_ratio);
+		toplevel->float_height = (int)(h * floating_default_height_ratio);
 		if (toplevel->float_width < floating_create_min_width)
 			toplevel->float_width = floating_create_min_width;
 		if (toplevel->float_height < floating_create_min_height)
 			toplevel->float_height = floating_create_min_height;
-		toplevel->float_x = (out_w - toplevel->float_width) / 2;
-		toplevel->float_y = (out_h - toplevel->float_height) / 2;
+		toplevel->float_x = (w - toplevel->float_width) / 2;
+		toplevel->float_y = (h - toplevel->float_height) / 2;
 
 		toplevel->floating = true;
 		wl_list_remove(&toplevel->workspace_link);
@@ -371,6 +369,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	}
 
 	wl_list_remove(&toplevel->link);
+	wl_list_init(&toplevel->link);
 	wl_list_remove(&toplevel->workspace_link);
 	wl_list_init(&toplevel->workspace_link);
 
@@ -381,6 +380,25 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	struct uwm_workspace *ws = toplevel->workspace;
+
+	if (toplevel->fullscreen) {
+		toplevel->fullscreen = false;
+		ws->fullscreen_window = NULL;
+
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+		}
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+		}
+		struct uwm_output *output;
+		wl_list_for_each(output, &toplevel->server->outputs, link) {
+			wlr_scene_node_set_enabled(&output->layer_top->node, true);
+			wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
+		}
+	}
+
 	if (ws->last_focused == toplevel)
 		ws->last_focused = NULL;
 
@@ -406,6 +424,8 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 			set_children_visible(ws->root, true);
 			bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
 		}
+	} else if (ws->monocle && focus_was_displaced && ws->focused) {
+		bsp_arrange_workspace(ws);
 	}
 
 	if (focus_was_displaced && ws->focused) {
@@ -505,6 +525,9 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		toplevel->image_capture_scene = NULL;
 	}
 
+	if (toplevel == toplevel->server->grabbed_toplevel)
+		reset_cursor_mode(toplevel->server);
+
 	struct uwm_workspace *ws = toplevel->workspace;
 	if (ws->last_focused == toplevel)
 		ws->last_focused = NULL;
@@ -512,6 +535,23 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		ws->focused = NULL;
 	if (ws->fullscreen_window == toplevel)
 		ws->fullscreen_window = NULL;
+
+	/* Remove from all lists (safe if already removed by unmap) */
+	wl_list_remove(&toplevel->link);
+	wl_list_init(&toplevel->link);
+	wl_list_remove(&toplevel->workspace_link);
+	wl_list_init(&toplevel->workspace_link);
+
+	/* If unmap was not called (e.g. force-close), clean up BSP tree */
+	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
+		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
+		if (leaf) {
+			bsp_remove(ws, toplevel);
+			int x, y, w, h;
+			get_output_size(ws, &x, &y, &w, &h);
+			bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
+		}
+	}
 
 	/* Notify bar: workspace occupancy may have changed */
 	if (toplevel->server->bar_manager && toplevel->server->active_output) {

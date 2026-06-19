@@ -41,6 +41,9 @@ void toggle_floating(struct uwm_toplevel *window)
 		window->float_x = (out_w - float_w) / 2;
 		window->float_y = (out_h - float_h) / 2;
 
+		enum uwm_split saved_sibling_split = UWM_SPLIT_VERTICAL;
+		struct uwm_bsp_node *saved_sibling_node = NULL;
+
 		if (ws->root) {
 			struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, window);
 			if (leaf && leaf->parent) {
@@ -50,19 +53,49 @@ void toggle_floating(struct uwm_toplevel *window)
 				window->bsp_saved_ratio = parent->ratio;
 				window->bsp_saved_mode = parent->mode;
 				window->bsp_saved_is_second = (parent->second == leaf);
-				window->bsp_saved_sibling = (parent->second == leaf)
-					? parent->first->toplevel
-					: parent->second->toplevel;
+
+				struct uwm_bsp_node *sibling = (parent->second == leaf)
+					? parent->first : parent->second;
+
+				if (sibling->toplevel) {
+					window->bsp_saved_sibling = sibling->toplevel;
+					window->bsp_saved_depth = 0;
+				} else {
+					saved_sibling_node = sibling;
+					saved_sibling_split = sibling->split;
+
+					struct uwm_bsp_node *leaves[UWM_MAX_WINDOWS];
+					int count = 0;
+					bsp_collect_leaves(sibling, leaves, &count, UWM_MAX_WINDOWS);
+					if (count > 0) {
+						window->bsp_saved_sibling = leaves[0]->toplevel;
+						int depth = 0;
+						struct uwm_bsp_node *n = leaves[0];
+						while (n && n != sibling) {
+							n = n->parent;
+							depth++;
+						}
+						window->bsp_saved_depth = depth;
+					} else {
+						window->bsp_saved_sibling = NULL;
+						window->bsp_saved_depth = 0;
+					}
+				}
 			} else {
 				window->bsp_saved = false;
 				window->bsp_saved_sibling = NULL;
+				window->bsp_saved_depth = 0;
 			}
 		} else {
 			window->bsp_saved = false;
 			window->bsp_saved_sibling = NULL;
+			window->bsp_saved_depth = 0;
 		}
 
 		bsp_remove(ws, window);
+
+		if (saved_sibling_node)
+			saved_sibling_node->split = saved_sibling_split;
 		window->floating = true;
 
 		wl_list_remove(&window->floating_link);
@@ -80,7 +113,8 @@ void toggle_floating(struct uwm_toplevel *window)
 	} else {
 		window->floating = false;
 		wl_list_remove(&window->floating_link);
-		wl_list_init(&window->floating_link);
+		wl_list_init(&window->workspace_link);
+		wl_list_insert(&ws->toplevels, &window->workspace_link);
 
 		wlr_scene_node_reparent(
 			&window->scene_tree->node,
@@ -134,12 +168,12 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		wlr_scene_node_set_position(&window->scene_tree->node, 0, 0);
 		wlr_xdg_toplevel_set_size(window->xdg_toplevel, out_w, out_h);
 
-		struct uwm_toplevel *tl, *tmp;
-		wl_list_for_each_safe(tl, tmp, &ws->toplevels, workspace_link) {
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
 			if (tl != window)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
-		wl_list_for_each_safe(tl, tmp, &ws->floating_windows, floating_link) {
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
 			if (tl != window)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
@@ -154,11 +188,11 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		window->fullscreen = false;
 		ws->fullscreen_window = NULL;
 
-		struct uwm_toplevel *tl, *tmp;
-		wl_list_for_each_safe(tl, tmp, &ws->toplevels, workspace_link) {
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
-		wl_list_for_each_safe(tl, tmp, &ws->floating_windows, floating_link) {
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
 		struct uwm_output *output;
