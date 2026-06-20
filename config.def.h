@@ -160,6 +160,11 @@
 #define RULE(appid, _title, ws, fl, fs, op_en, op_val) \
 	{ .app_id = appid, .title = _title, .workspace = ws, \
 	  .set_floating = fl, .set_fullscreen = fs, \
-	  .has_opacity = op_en, .opacity = op_val }
-/* no default rules */
-#define RULES
+	  .has_opacity = op_en, .opacity = op_val },
+/* Float portal file picker dialogs to prevent BSP tiling from breaking
+ * popup positioning and file selection. */
+#define RULES \
+	RULE("xdg-desktop-portal-gtk", NULL, -1, true, false, false, 0) \
+	RULE("xdg-desktop-portal", NULL, -1, true, false, false, 0) \
+	RULE("org.freedesktop.impl.portal.desktop.gtk", NULL, -1, true, false, false, 0) \
+	RULE("org.gtk.Portal", NULL, -1, true, false, false, 0)

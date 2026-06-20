@@ -11,6 +11,7 @@
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include "input.h"
 #include "config.h"
 #include "window.h"
@@ -865,4 +866,77 @@ void server_cursor_axis(struct wl_listener *listener, void *data) {
 void server_cursor_frame(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, cursor_frame);
 	wlr_seat_pointer_notify_frame(server->seat);
+}
+
+void server_cursor_swipe_begin(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_begin);
+	struct wlr_pointer_swipe_begin_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_swipe_begin(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->fingers);
+}
+
+void server_cursor_swipe_update(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_update);
+	struct wlr_pointer_swipe_update_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_swipe_update(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->dx, event->dy);
+}
+
+void server_cursor_swipe_end(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_end);
+	struct wlr_pointer_swipe_end_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_swipe_end(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->cancelled);
+}
+
+void server_cursor_pinch_begin(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_pinch_begin);
+	struct wlr_pointer_pinch_begin_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_pinch_begin(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->fingers);
+}
+
+void server_cursor_pinch_update(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_pinch_update);
+	struct wlr_pointer_pinch_update_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_pinch_update(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->dx, event->dy,
+			event->scale, event->rotation);
+}
+
+void server_cursor_pinch_end(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_pinch_end);
+	struct wlr_pointer_pinch_end_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_pinch_end(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->cancelled);
+}
+
+void server_cursor_hold_begin(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_hold_begin);
+	struct wlr_pointer_hold_begin_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_hold_begin(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->fingers);
+}
+
+void server_cursor_hold_end(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_hold_end);
+	struct wlr_pointer_hold_end_event *event = data;
+	if (server->pointer_gestures)
+		wlr_pointer_gestures_v1_send_hold_end(
+			server->pointer_gestures, server->seat,
+			event->time_msec, event->cancelled);
 }
