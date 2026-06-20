@@ -352,6 +352,23 @@ bool server_init(struct uwm_server *server) {
 	server->cursor_frame.notify = server_cursor_frame;
 	wl_signal_add(&server->cursor->events.frame, &server->cursor_frame);
 
+	server->cursor_swipe_begin.notify = server_cursor_swipe_begin;
+	wl_signal_add(&server->cursor->events.swipe_begin, &server->cursor_swipe_begin);
+	server->cursor_swipe_update.notify = server_cursor_swipe_update;
+	wl_signal_add(&server->cursor->events.swipe_update, &server->cursor_swipe_update);
+	server->cursor_swipe_end.notify = server_cursor_swipe_end;
+	wl_signal_add(&server->cursor->events.swipe_end, &server->cursor_swipe_end);
+	server->cursor_pinch_begin.notify = server_cursor_pinch_begin;
+	wl_signal_add(&server->cursor->events.pinch_begin, &server->cursor_pinch_begin);
+	server->cursor_pinch_update.notify = server_cursor_pinch_update;
+	wl_signal_add(&server->cursor->events.pinch_update, &server->cursor_pinch_update);
+	server->cursor_pinch_end.notify = server_cursor_pinch_end;
+	wl_signal_add(&server->cursor->events.pinch_end, &server->cursor_pinch_end);
+	server->cursor_hold_begin.notify = server_cursor_hold_begin;
+	wl_signal_add(&server->cursor->events.hold_begin, &server->cursor_hold_begin);
+	server->cursor_hold_end.notify = server_cursor_hold_end;
+	wl_signal_add(&server->cursor->events.hold_end, &server->cursor_hold_end);
+
 	/* Configures a seat, which is a single "seat" at which a user sits and
 	 * operates the computer. This conceptually includes up to one keyboard,
 	 * pointer, touch, and drawing tablet device. We also rig up a listener to
@@ -369,6 +386,9 @@ bool server_init(struct uwm_server *server) {
 	wl_signal_add(&server->seat->events.request_set_selection, &server->request_set_selection);
 	server->request_set_primary_selection.notify = seat_request_set_primary_selection;
 	wl_signal_add(&server->seat->events.request_set_primary_selection, &server->request_set_primary_selection);
+
+	/* Create pointer gestures protocol for touchpad pinch/ swipe/hold support */
+	server->pointer_gestures = wlr_pointer_gestures_v1_create(server->wl_display);
 
 	bsp_pool_init(&server->bsp_pool);
 	workspace_manager_init(&server->workspaces);
@@ -514,6 +534,14 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->cursor_button.link);
 	wl_list_remove(&server->cursor_axis.link);
 	wl_list_remove(&server->cursor_frame.link);
+	wl_list_remove(&server->cursor_swipe_begin.link);
+	wl_list_remove(&server->cursor_swipe_update.link);
+	wl_list_remove(&server->cursor_swipe_end.link);
+	wl_list_remove(&server->cursor_pinch_begin.link);
+	wl_list_remove(&server->cursor_pinch_update.link);
+	wl_list_remove(&server->cursor_pinch_end.link);
+	wl_list_remove(&server->cursor_hold_begin.link);
+	wl_list_remove(&server->cursor_hold_end.link);
 
 	wl_list_remove(&server->new_input.link);
 	wl_list_remove(&server->request_cursor.link);

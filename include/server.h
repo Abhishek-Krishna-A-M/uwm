@@ -23,6 +23,7 @@
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include "config.h"
 #include "workspace.h"
 #include "layer_shell.h"
@@ -66,8 +67,17 @@ struct uwm_server {
 	struct wl_listener cursor_button;
 	struct wl_listener cursor_axis;
 	struct wl_listener cursor_frame;
+	struct wl_listener cursor_swipe_begin;
+	struct wl_listener cursor_swipe_update;
+	struct wl_listener cursor_swipe_end;
+	struct wl_listener cursor_pinch_begin;
+	struct wl_listener cursor_pinch_update;
+	struct wl_listener cursor_pinch_end;
+	struct wl_listener cursor_hold_begin;
+	struct wl_listener cursor_hold_end;
 
 	struct wlr_seat *seat;
+	struct wlr_pointer_gestures_v1 *pointer_gestures;
 	struct wl_listener new_input;
 	struct wl_listener request_cursor;
 	struct wl_listener pointer_focus_change;

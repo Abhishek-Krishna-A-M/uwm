@@ -40,5 +40,13 @@ void server_cursor_motion_absolute(struct wl_listener *listener, void *data);
 void server_cursor_button(struct wl_listener *listener, void *data);
 void server_cursor_axis(struct wl_listener *listener, void *data);
 void server_cursor_frame(struct wl_listener *listener, void *data);
+void server_cursor_swipe_begin(struct wl_listener *listener, void *data);
+void server_cursor_swipe_update(struct wl_listener *listener, void *data);
+void server_cursor_swipe_end(struct wl_listener *listener, void *data);
+void server_cursor_pinch_begin(struct wl_listener *listener, void *data);
+void server_cursor_pinch_update(struct wl_listener *listener, void *data);
+void server_cursor_pinch_end(struct wl_listener *listener, void *data);
+void server_cursor_hold_begin(struct wl_listener *listener, void *data);
+void server_cursor_hold_end(struct wl_listener *listener, void *data);
 
 #endif /* INPUT_H */

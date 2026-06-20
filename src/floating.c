@@ -165,7 +165,8 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		ws->fullscreen_window = window;
 		window->fullscreen = true;
 
-		wlr_scene_node_set_position(&window->scene_tree->node, 0, 0);
+		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, true);
+		wlr_scene_node_set_position(&window->scene_tree->node, out_x, out_y);
 		wlr_xdg_toplevel_set_size(window->xdg_toplevel, out_w, out_h);
 
 		struct uwm_toplevel *tl;
@@ -187,6 +188,7 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 	} else {
 		window->fullscreen = false;
 		ws->fullscreen_window = NULL;
+		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, false);
 
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
