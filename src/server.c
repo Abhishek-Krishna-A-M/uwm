@@ -25,8 +25,6 @@ static int handle_term_signal(int signo, void *data) {
 	return 0;
 }
 
-}
-
 static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, new_foreign_toplevel_capture_request);
 	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;

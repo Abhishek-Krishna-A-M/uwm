@@ -229,8 +229,6 @@ static void handle_unmap(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = surface->output->server;
 	(void)data;
 
-	struct uwm_server *server = surface->output->server;
-
 	/* If this layer had keyboard focus, restore to workspace window */
 	if (surface->layer_surface->surface ==
 			server->seat->keyboard_state.focused_surface) {
