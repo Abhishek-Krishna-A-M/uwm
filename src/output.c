@@ -18,7 +18,15 @@ static void output_frame(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = wl_container_of(listener, output, frame);
 	struct uwm_server *server = output->server;
 
-	wlr_scene_output_commit(output->scene_output, NULL);
+	if (!output->wlr_output->enabled ||
+			(server->session && !server->session->active))
+		return;
+
+	if (!wlr_scene_output_commit(output->scene_output, NULL)) {
+		wlr_log(WLR_DEBUG, "output commit failed, scheduling retry");
+		wlr_output_schedule_frame(output->wlr_output);
+		return;
+	}
 
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -27,7 +35,16 @@ static void output_frame(struct wl_listener *listener, void *data) {
 
 static void output_request_state(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = wl_container_of(listener, output, request_state);
+	struct uwm_server *server = output->server;
 	const struct wlr_output_event_request_state *event = data;
+
+	/* Skip output commits while the session is inactive (e.g. during
+	 * VT switch). The DRM master is not held, so any DRM call would
+	 * fail or crash. The DRM backend will fire a frame event after
+	 * restoring CRTCs on session resume. */
+	if (server->session && !server->session->active)
+		return;
+
 	wlr_output_commit_state(output->wlr_output, event->state);
 
 	layer_surface_arrange(output);

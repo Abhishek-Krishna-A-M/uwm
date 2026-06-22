@@ -155,6 +155,9 @@ bool session_lock_create(struct uwm_server *server) {
 }
 
 void session_lock_destroy(struct uwm_server *server) {
+	if (!server->session_lock.manager)
+		return;
+
 	wl_list_remove(&server->session_lock.new_lock.link);
 	wl_list_remove(&server->session_lock.manager_destroy.link);
 }

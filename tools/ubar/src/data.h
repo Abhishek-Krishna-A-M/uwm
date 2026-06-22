@@ -2,12 +2,14 @@
 #define UBAR_DATA_H
 
 #include "ubar.h"
+#include <pthread.h>
 
 extern int g_vol_pct;
 extern bool g_muted;
 extern char g_net_name[128];
 extern char g_net_speed[128];
 extern char g_net_iface[32];
+extern pthread_mutex_t g_data_mutex;
 
 void data_init_fast(State *state);
 void data_start_monitors(State *state);

@@ -429,16 +429,10 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	}
 
 	if (focus_was_displaced && ws->focused) {
-		struct wlr_surface *target_surface = ws->focused->xdg_toplevel->base->surface;
-		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-		if (keyboard) {
-			wlr_log(WLR_INFO, "UNMAP: restoring kb focus to app_id=%s title=%s",
-				ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
-				ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
-			wlr_seat_keyboard_notify_enter(seat, target_surface,
-				keyboard->keycodes, keyboard->num_keycodes,
-				&keyboard->modifiers);
-		}
+		wlr_log(WLR_INFO, "UNMAP: restoring focus to app_id=%s title=%s",
+			ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
+			ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
+		focus_toplevel(ws->focused);
 	} else if (!ws->focused) {
 		wlr_log(WLR_INFO, "UNMAP: no focused window, clearing keyboard focus");
 		wlr_seat_keyboard_notify_clear_focus(seat);
