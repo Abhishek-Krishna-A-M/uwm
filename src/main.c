@@ -4,7 +4,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
-#include <setjmp.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
@@ -14,36 +13,6 @@
 #include "config.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
-
-static void crash_handler(int sig) {
-	if (g_crash_jmpbuf_valid) {
-		g_crash_jmpbuf_valid = 0;
-		write(STDERR_FILENO, "UWM: crash caught, recovering\n", 31);
-		siglongjmp(g_crash_jmpbuf, sig);
-	}
-	signal(sig, SIG_DFL);
-	raise(sig);
-}
-
-static void install_crash_handlers(struct sigaction *old) {
-	struct sigaction sa;
-	sa.sa_handler = crash_handler;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_NODEFER | SA_RESTART;
-	sigaction(SIGSEGV, &sa, &old[0]);
-	sigaction(SIGABRT, &sa, &old[1]);
-	sigaction(SIGBUS, &sa, &old[2]);
-	sigaction(SIGFPE, &sa, &old[3]);
-	sigaction(SIGILL, &sa, &old[4]);
-}
-
-static void restore_crash_handlers(struct sigaction *old) {
-	sigaction(SIGSEGV, &old[0], NULL);
-	sigaction(SIGABRT, &old[1], NULL);
-	sigaction(SIGBUS, &old[2], NULL);
-	sigaction(SIGFPE, &old[3], NULL);
-	sigaction(SIGILL, &old[4], NULL);
-}
 
 static const char *pid_dir = "/tmp/uwm-autostart";
 
@@ -80,26 +49,6 @@ static bool pid_alive(int pid)
 {
 	if (pid <= 0) return false;
 	return kill(pid, 0) == 0 || errno == EPERM;
-}
-
-static struct uwm_poll_state {
-	struct wl_event_source *src;
-	struct uwm_server *server;
-} g_poll;
-
-static int check_session_poll(void *data) {
-	struct uwm_server *server = data;
-	char buf[128];
-
-	if (server->session) {
-		int n = snprintf(buf, sizeof(buf),
-			"UWM_POLL: session active=%d\n", server->session->active);
-		write(STDERR_FILENO, buf, n);
-	}
-	/* Re-arm for next poll in 2 seconds */
-	if (g_poll.src)
-		wl_event_source_timer_update(g_poll.src, 2000);
-	return 1;
 }
 
 static void spawn_cmd(const char *cmd)
@@ -210,38 +159,9 @@ int main(int argc, char *argv[]) {
 	if (startup_cmd)
 		spawn_cmd(startup_cmd);
 
-	/* Debug: poll session->active every 2 seconds */
-	{
-		struct wl_event_loop *evloop_ = wl_display_get_event_loop(server.wl_display);
-		if (evloop_) {
-			g_poll.server = &server;
-			g_poll.src = wl_event_loop_add_timer(evloop_, check_session_poll, &server);
-			if (g_poll.src)
-				wl_event_source_timer_update(g_poll.src, 2000);
-		}
-	}
-
 	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", socket);
 
-	struct sigaction old_handlers[5];
-	install_crash_handlers(old_handlers);
-
-	if (sigsetjmp(g_crash_jmpbuf, 1) == 0) {
-		g_crash_jmpbuf_valid = 1;
-		wl_display_run(server.wl_display);
-		g_crash_jmpbuf_valid = 0;
-	} else {
-		g_crash_jmpbuf_valid = 0;
-		write(STDERR_FILENO, "UWM: recovered, rebuilding\n", 28);
-		uwm_rebuild_session_listeners(&server);
-		uwm_call_session_active(&server);
-		write(STDERR_FILENO, "UWM: restarting event loop\n", 28);
-		g_crash_jmpbuf_valid = 1;
-		wl_display_run(server.wl_display);
-		g_crash_jmpbuf_valid = 0;
-	}
-
-	restore_crash_handlers(old_handlers);
+	wl_display_run(server.wl_display);
 
 	server_finish(&server);
 

@@ -1,6 +1,5 @@
 #include <stdbool.h>
 #include <signal.h>
-#include <setjmp.h>
 #include <unistd.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_compositor.h>
@@ -42,78 +41,16 @@ static void handle_renderer_lost(struct wl_listener *listener, void *data) {
 
 static void handle_session_active(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, session_active);
-	const char *msg;
 
 	if (server->session->active) {
-		msg = "SESSION_ACTIVE signal: active=true\n";
-		write(STDERR_FILENO, msg, strlen(msg));
-
+		wlr_log(WLR_INFO, "Session active: resuming outputs");
 		struct uwm_output *output;
 		wl_list_for_each(output, &server->outputs, link) {
 			wlr_output_schedule_frame(output->wlr_output);
 		}
 	} else {
-		msg = "SESSION_ACTIVE signal: active=false\n";
-		write(STDERR_FILENO, msg, strlen(msg));
+		wlr_log(WLR_INFO, "Session inactive: pausing rendering");
 	}
-}
-
-/* Crash-recovery state for session signal emissions.
- * We save the listener list at startup so we can rebuild it after
- * a crash in wl_signal_emit_mutable (the libinput handler).  This
- * avoids accessing the dangling cursor/end markers that
- * wl_signal_emit_mutable leaves on the stack after siglongjmp. */
-static struct wl_listener *g_saved_listeners[64];
-static int g_n_saved;
-sigjmp_buf g_crash_jmpbuf;
-volatile sig_atomic_t g_crash_jmpbuf_valid;
-
-void uwm_save_session_listeners(struct uwm_server *server) {
-	struct wl_signal *sig = &server->session->events.active;
-	struct wl_list *head = &sig->listener_list;
-	g_n_saved = 0;
-	struct wl_list *pos = head->next;
-	while (pos != head && g_n_saved < 64) {
-		struct wl_listener *l = wl_container_of(pos, l, link);
-		g_saved_listeners[g_n_saved++] = l;
-		pos = pos->next;
-	}
-}
-
-void uwm_rebuild_session_listeners(struct uwm_server *server) {
-	struct wl_signal *sig = &server->session->events.active;
-	struct wl_list *head = &sig->listener_list;
-	wl_list_init(head);
-	for (int i = 0; i < g_n_saved; i++) {
-		wl_list_insert(head->prev, &g_saved_listeners[i]->link);
-	}
-}
-
-void uwm_call_session_active(struct uwm_server *server) {
-	handle_session_active(&server->session_active, NULL);
-}
-
-/* Sentinel placed at the HEAD of the session signal list.
- * It fires FIRST, before all other listeners (DRM, libinput, our handler).
- * We call handle_session_active here so it runs even if a later
- * listener (libinput) crashes and kills the process.
- * Crash protection: main() wraps wl_display_run with sigsetjmp. */
-static struct wl_listener g_session_active_sentinel;
-static int g_session_active_signal_fired;
-static struct uwm_server *g_sentinel_server;
-
-static void handle_session_active_sentinel(struct wl_listener *listener, void *data) {
-	char dbg[128];
-	g_session_active_signal_fired++;
-
-	int n = snprintf(dbg, sizeof(dbg),
-		"SENTINEL FIRED: count=%d\n", g_session_active_signal_fired);
-	write(STDERR_FILENO, dbg, n);
-
-	/* Call our handler NOW, before the DRM/libinput handlers fire.
-	 * Crash recovery in main() catches any fatal signal and
-	 * rebuilds the listener list + calls our handler. */
-	handle_session_active(&g_sentinel_server->session_active, data);
 }
 
 static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
@@ -170,6 +107,11 @@ static void handle_transient_seat_create(struct wl_listener *listener, void *dat
 static void handle_output_manager_apply(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, output_manager_apply);
 	struct wlr_output_configuration_v1 *config = data;
+
+	if (server->session && !server->session->active) {
+		wlr_output_configuration_v1_send_failed(config);
+		return;
+	}
 
 	struct wlr_output_configuration_head_v1 *config_head;
 	wl_list_for_each(config_head, &config->heads, link) {
@@ -264,25 +206,8 @@ bool server_init(struct uwm_server *server) {
 		wlr_log(WLR_ERROR, "No session backend available. VT switching will not work.");
 		wlr_log(WLR_ERROR, "Install seatd or elogind for session management.");
 	} else {
-		g_sentinel_server = server;
-
 		server->session_active.notify = handle_session_active;
 		wl_signal_add(&server->session->events.active, &server->session_active);
-		write(STDERR_FILENO, "UWM: session_active listener registered\n", 41);
-
-		/* Insert a sentinel at the HEAD of the signal list.
-		 * This fires BEFORE all other listeners (DRM, libinput, and
-		 * our main handler). The sentinel calls our handler early
-		 * so it runs even if a later listener crashes. */
-		g_session_active_sentinel.notify = handle_session_active_sentinel;
-		wl_list_insert(&server->session->events.active.listener_list,
-			&g_session_active_sentinel.link);
-		write(STDERR_FILENO, "UWM: sentinel listener inserted at HEAD\n", 41);
-
-		/* Save listener list for crash recovery in main().
-		 * Must happen after ALL session listeners are registered. */
-		uwm_save_session_listeners(server);
-		write(STDERR_FILENO, "UWM: saved listener list for crash recovery\n", 44);
 	}
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -713,7 +638,6 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->renderer_lost.link);
 
 	if (server->session) {
-		wl_list_remove(&g_session_active_sentinel.link);
 		wl_list_remove(&server->session_active.link);
 	}
 

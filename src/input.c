@@ -540,6 +540,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
 static void keyboard_handle_destroy(struct wl_listener *listener, void *data) {
 	struct uwm_keyboard *keyboard = wl_container_of(listener, keyboard, destroy);
+	struct uwm_server *server = keyboard->server;
 	if (keyboard->repeat_timer)
 		wl_event_source_remove(keyboard->repeat_timer);
 	wl_list_remove(&keyboard->modifiers.link);
@@ -547,6 +548,11 @@ static void keyboard_handle_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&keyboard->destroy.link);
 	wl_list_remove(&keyboard->link);
 	free(keyboard);
+
+	uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
+	if (!wl_list_empty(&server->keyboards))
+		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+	wlr_seat_set_capabilities(server->seat, caps);
 }
 
 static void server_new_keyboard(struct uwm_server *server, struct wlr_input_device *device) {
