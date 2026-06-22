@@ -134,15 +134,27 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 	if (!window)
 		return;
 	struct uwm_workspace *ws = window->workspace;
-	int out_x, out_y, out_w, out_h;
-	get_output_size(ws, &out_x, &out_y, &out_w, &out_h);
+	struct uwm_output *output = ws->output;
 
 	if (!window->fullscreen) {
-		window->saved_floating = window->floating;
+		/* Hide other windows and layers FIRST so there is no visual
+		 * flicker while we reparent and resize the fullscreen window. */
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+			if (tl != window)
+				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
+		}
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
+			if (tl != window)
+				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
+		}
+		struct uwm_output *iter;
+		wl_list_for_each(iter, &window->server->outputs, link) {
+			wlr_scene_node_set_enabled(&iter->layer_top->node, false);
+			wlr_scene_node_set_enabled(&iter->layer_overlay->node, false);
+		}
 
-		wlr_scene_node_reparent(
-			&window->scene_tree->node,
-			window->server->floating_layer);
+		window->saved_floating = window->floating;
 
 		if (window->floating) {
 			window->saved_x = window->float_x;
@@ -165,24 +177,16 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		ws->fullscreen_window = window;
 		window->fullscreen = true;
 
-		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, true);
-		wlr_scene_node_set_position(&window->scene_tree->node, out_x, out_y);
-		wlr_xdg_toplevel_set_size(window->xdg_toplevel, out_w, out_h);
+		wlr_scene_node_reparent(
+			&window->scene_tree->node,
+			window->server->floating_layer);
 
-		struct uwm_toplevel *tl;
-		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-			if (tl != window)
-				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
-		}
-		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
-			if (tl != window)
-				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
-		}
-		struct uwm_output *output;
-		wl_list_for_each(output, &window->server->outputs, link) {
-			wlr_scene_node_set_enabled(&output->layer_top->node, false);
-			wlr_scene_node_set_enabled(&output->layer_overlay->node, false);
-		}
+		int fs_w = output ? output->wlr_output->width : 0;
+		int fs_h = output ? output->wlr_output->height : 0;
+		wlr_scene_node_set_position(&window->scene_tree->node, 0, 0);
+		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, true);
+		wlr_xdg_toplevel_set_size(window->xdg_toplevel, fs_w, fs_h);
+
 		wlr_scene_node_raise_to_top(&window->scene_tree->node);
 
 	} else {
@@ -190,19 +194,10 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		ws->fullscreen_window = NULL;
 		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, false);
 
-		struct uwm_toplevel *tl;
-		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
-		}
-		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
-			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
-		}
-		struct uwm_output *output;
-		wl_list_for_each(output, &window->server->outputs, link) {
-			wlr_scene_node_set_enabled(&output->layer_top->node, true);
-			wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
-		}
-
+		/* Restore geometry BEFORE showing other windows so the
+		 * scene doesn't render the fullscreen window at full size
+		 * overlapping other windows underneath (causes flicker with
+		 * transparent windows). */
 		if (window->saved_floating) {
 			window->floating = true;
 			window->float_x = window->saved_x;
@@ -218,13 +213,30 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 				window->float_x, window->float_y);
 			wlr_xdg_toplevel_set_size(window->xdg_toplevel,
 				window->float_width, window->float_height);
-			raise_floating(window);
 		} else {
 			wlr_scene_node_reparent(
 				&window->scene_tree->node,
 				window->server->tiled_layer);
 		}
 
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+		}
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+		}
+		struct uwm_output *iter;
+		wl_list_for_each(iter, &window->server->outputs, link) {
+			wlr_scene_node_set_enabled(&iter->layer_top->node, true);
+			wlr_scene_node_set_enabled(&iter->layer_overlay->node, true);
+		}
+
+		if (window->saved_floating)
+			raise_floating(window);
+
+		int out_x, out_y, out_w, out_h;
+		get_output_size(ws, &out_x, &out_y, &out_w, &out_h);
 		bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
 
 		if (ws->focused == window)

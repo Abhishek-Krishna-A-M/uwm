@@ -403,6 +403,9 @@ bool layer_shell_create(struct uwm_server *server) {
 }
 
 void layer_shell_destroy(struct uwm_server *server) {
+	if (!server->layer_shell.layer_shell)
+		return;
+
 	struct uwm_layer_surface *layer_surface, *tmp;
 	wl_list_for_each_safe(layer_surface, tmp, &server->layer_surfaces, link) {
 		layer_surface_destroy(layer_surface);

@@ -22,6 +22,7 @@ static uint64_t prev_rx = 0, prev_tx = 0;
 static uint64_t prev_cpu_idle = 0, prev_cpu_total = 0;
 static int cached_thermal_zone = -1;  /* -1 = not yet probed */
 static int cached_bat = -1;           /* -1 = not yet probed, 0/1 = bat index */
+pthread_mutex_t g_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void data_update_clock(State *state) {
 	time_t t = time(NULL);
@@ -260,14 +261,18 @@ void data_update_network(void) {
 
 	if (!g_net_online) {
 		LOG("no active interface found");
+		pthread_mutex_lock(&g_data_mutex);
 		snprintf(g_net_name, sizeof(g_net_name), "󰖪 Offline");
 		snprintf(g_net_speed, sizeof(g_net_speed), "%s", g_net_name);
 		g_net_iface[0] = 0;
+		pthread_mutex_unlock(&g_data_mutex);
 		return;
 	}
 
 	LOG("active iface: %s (wifi=%d)", active_iface, is_wifi);
+	pthread_mutex_lock(&g_data_mutex);
 	snprintf(g_net_iface, sizeof(g_net_iface), "%s", active_iface);
+	pthread_mutex_unlock(&g_data_mutex);
 
 	/* Try to get a human-readable connection name via nmcli */
 	char conn_name[256] = {0};
@@ -303,7 +308,9 @@ void data_update_network(void) {
 	} else {
 		net_icon = "󰈀";
 	}
+	pthread_mutex_lock(&g_data_mutex);
 	snprintf(g_net_name, sizeof(g_net_name), "%s %s", net_icon, conn_name);
+	pthread_mutex_unlock(&g_data_mutex);
 
 	uint64_t rx = 0, tx = 0;
 	FILE *f = fopen("/proc/net/dev", "r");
@@ -341,8 +348,9 @@ void data_update_network(void) {
 		else snprintf(tx_str, sizeof(tx_str), "%.1fM", kb / 1024.0);
 	}
 
+	pthread_mutex_lock(&g_data_mutex);
 	snprintf(g_net_speed, sizeof(g_net_speed), "%s \u2193%s \u2191%s", net_icon, rx_str, tx_str);
-	LOG("network: name=\"%s\" speed=\"%s\"", g_net_name, g_net_speed);
+	pthread_mutex_unlock(&g_data_mutex);
 }
 
 /* --- Volume: runs in background thread to avoid blocking main --- */
@@ -376,15 +384,19 @@ bool data_update_volume(void) {
 		LOG("wpctl popen FAILED: %s", strerror(errno));
 	}
 
-	bool changed = (vol != g_vol_pct) || (muted != g_muted);
+	bool changed;
+	pthread_mutex_lock(&g_data_mutex);
+	changed = (vol != g_vol_pct) || (muted != g_muted);
 	g_vol_pct = vol;
 	g_muted = muted;
+	pthread_mutex_unlock(&g_data_mutex);
 	return changed;
 }
 
 /* --- Sync globals to state (called from main thread after pipe notify) --- */
 
 void data_sync_to_state(State *state) {
+	pthread_mutex_lock(&g_data_mutex);
 	state->vol_pct = g_vol_pct;
 	state->muted = g_muted;
 	if (strcmp(state->net_name, g_net_name) != 0) {
@@ -395,6 +407,7 @@ void data_sync_to_state(State *state) {
 		LOG("syncing net_speed: \"%s\" -> \"%s\"", state->net_speed, g_net_speed);
 		snprintf(state->net_speed, sizeof(state->net_speed), "%s", g_net_speed);
 	}
+	pthread_mutex_unlock(&g_data_mutex);
 }
 
 /* --- Timer data --- */

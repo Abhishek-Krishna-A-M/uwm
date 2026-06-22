@@ -1,6 +1,8 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <signal.h>
+#include <setjmp.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
@@ -44,6 +46,7 @@ struct uwm_server {
 	struct wlr_backend *backend;
 	struct wlr_renderer *renderer;
 	struct wlr_allocator *allocator;
+	struct wlr_compositor *compositor;
 	struct wlr_scene *scene;
 	struct wlr_scene_tree *tiled_layer;
 	struct wlr_scene_tree *floating_layer;
@@ -102,6 +105,7 @@ struct uwm_server {
 	struct wlr_session *session;
 	struct uwm_config config;
 	struct wl_listener renderer_lost;
+	struct wl_listener session_active;
 	bool locked;                              /* session lock active */
 
 	/* Layer shell support */
@@ -141,5 +145,12 @@ struct uwm_server {
 
 bool server_init(struct uwm_server *server);
 void server_finish(struct uwm_server *server);
+
+/* Crash recovery for session signal emission */
+void uwm_save_session_listeners(struct uwm_server *server);
+void uwm_rebuild_session_listeners(struct uwm_server *server);
+void uwm_call_session_active(struct uwm_server *server);
+extern sigjmp_buf g_crash_jmpbuf;
+extern volatile sig_atomic_t g_crash_jmpbuf_valid;
 
 #endif /* SERVER_H */

@@ -59,6 +59,9 @@ bool idle_inhibit_create(struct uwm_server *server) {
 }
 
 void idle_inhibit_destroy(struct uwm_server *server) {
+	if (!server->idle_inhibit.manager)
+		return;
+
 	/* Destroy all inhibitors */
 	struct uwm_idle_inhibitor *inhibitor, *tmp;
 	wl_list_for_each_safe(inhibitor, tmp, &server->idle_inhibitors, link) {

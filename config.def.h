@@ -147,13 +147,11 @@
  * PipeWire is started here because runit has no user service manager.
  * Portals are started here for the same reason. */
 #define AUTOSTART \
-	"pipewire", \
-	"wireplumber", \
-	"mkdir -p \"$XDG_RUNTIME_DIR/pulse\" && while [ ! -S \"$XDG_RUNTIME_DIR/pipewire-0\" ]; do sleep 0.1; done; exec pipewire-pulse", \
 	"foot --server", \
 	"ubar", \
 	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
 	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
+	"runsvdir ~/.local/share/runit/service", \
 	NULL
 
 /* compile-time rules */

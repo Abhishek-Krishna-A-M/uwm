@@ -1,5 +1,7 @@
 #include <stdbool.h>
 #include <signal.h>
+#include <setjmp.h>
+#include <unistd.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -20,6 +22,9 @@
 
 static int handle_term_signal(int signo, void *data) {
 	struct uwm_server *server = data;
+	char buf[128];
+	int n = snprintf(buf, sizeof(buf), "UWM: handle_term_signal called with signo=%d\n", signo);
+	write(STDERR_FILENO, buf, n);
 	wlr_log(WLR_INFO, "Received signal %d, terminating compositor", signo);
 	wl_display_terminate(server->wl_display);
 	return 0;
@@ -27,8 +32,88 @@ static int handle_term_signal(int signo, void *data) {
 
 static void handle_renderer_lost(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, renderer_lost);
-	wlr_log(WLR_ERROR, "Renderer lost (GPU may have been reset). Terminating.");
-	wl_display_terminate(server->wl_display);
+
+	/* The renderer-lost signal is spurious during VT switch (DRM master
+	 * drop). The wlroots DRM backend restores the GPU context when the
+	 * session becomes active again. Ignore the signal entirely — recreating
+	 * the renderer destroys GPU resources still referenced by the scene
+	 * graph (use-after-free), and terminating triggers a crash in cleanup. */
+}
+
+static void handle_session_active(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, session_active);
+	const char *msg;
+
+	if (server->session->active) {
+		msg = "SESSION_ACTIVE signal: active=true\n";
+		write(STDERR_FILENO, msg, strlen(msg));
+
+		struct uwm_output *output;
+		wl_list_for_each(output, &server->outputs, link) {
+			wlr_output_schedule_frame(output->wlr_output);
+		}
+	} else {
+		msg = "SESSION_ACTIVE signal: active=false\n";
+		write(STDERR_FILENO, msg, strlen(msg));
+	}
+}
+
+/* Crash-recovery state for session signal emissions.
+ * We save the listener list at startup so we can rebuild it after
+ * a crash in wl_signal_emit_mutable (the libinput handler).  This
+ * avoids accessing the dangling cursor/end markers that
+ * wl_signal_emit_mutable leaves on the stack after siglongjmp. */
+static struct wl_listener *g_saved_listeners[64];
+static int g_n_saved;
+sigjmp_buf g_crash_jmpbuf;
+volatile sig_atomic_t g_crash_jmpbuf_valid;
+
+void uwm_save_session_listeners(struct uwm_server *server) {
+	struct wl_signal *sig = &server->session->events.active;
+	struct wl_list *head = &sig->listener_list;
+	g_n_saved = 0;
+	struct wl_list *pos = head->next;
+	while (pos != head && g_n_saved < 64) {
+		struct wl_listener *l = wl_container_of(pos, l, link);
+		g_saved_listeners[g_n_saved++] = l;
+		pos = pos->next;
+	}
+}
+
+void uwm_rebuild_session_listeners(struct uwm_server *server) {
+	struct wl_signal *sig = &server->session->events.active;
+	struct wl_list *head = &sig->listener_list;
+	wl_list_init(head);
+	for (int i = 0; i < g_n_saved; i++) {
+		wl_list_insert(head->prev, &g_saved_listeners[i]->link);
+	}
+}
+
+void uwm_call_session_active(struct uwm_server *server) {
+	handle_session_active(&server->session_active, NULL);
+}
+
+/* Sentinel placed at the HEAD of the session signal list.
+ * It fires FIRST, before all other listeners (DRM, libinput, our handler).
+ * We call handle_session_active here so it runs even if a later
+ * listener (libinput) crashes and kills the process.
+ * Crash protection: main() wraps wl_display_run with sigsetjmp. */
+static struct wl_listener g_session_active_sentinel;
+static int g_session_active_signal_fired;
+static struct uwm_server *g_sentinel_server;
+
+static void handle_session_active_sentinel(struct wl_listener *listener, void *data) {
+	char dbg[128];
+	g_session_active_signal_fired++;
+
+	int n = snprintf(dbg, sizeof(dbg),
+		"SENTINEL FIRED: count=%d\n", g_session_active_signal_fired);
+	write(STDERR_FILENO, dbg, n);
+
+	/* Call our handler NOW, before the DRM/libinput handlers fire.
+	 * Crash recovery in main() catches any fatal signal and
+	 * rebuilds the listener list + calls our handler. */
+	handle_session_active(&g_sentinel_server->session_active, data);
 }
 
 static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
@@ -136,16 +221,32 @@ bool server_init(struct uwm_server *server) {
 	 * interrupting blocking syscalls (crucial during VT switch).
 	 * SIGCHLD: prevent zombie processes from fork() calls.
 	 * SIGPIPE: prevent broken pipes (e.g. from PipeWire dying on VT switch)
-	 *          from killing the compositor. */
+	 *          from killing the compositor.
+	 * SIGHUP: logind may revoke the controlling terminal during VT switch,
+	 *         which sends SIGHUP to the foreground process group. Ignore it;
+	 *         wlroots handles session pause/resume via libseat/logind.
+	 * SIGTERM: logind sends SIGTERM when disabling a seat during VT switch.
+	 *          Ignore it — the event loop handles SIGINT for clean exit. */
 	struct sigaction sa_ign = { .sa_handler = SIG_IGN, .sa_flags = SA_RESTART };
 	sigaction(SIGCHLD, &sa_ign, NULL);
 	sigaction(SIGPIPE, &sa_ign, NULL);
+	sigaction(SIGHUP, &sa_ign, NULL);
+	sigaction(SIGTERM, &sa_ign, NULL);
 	config_load(&server->config);
 
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, managing Wayland globals, and so on. */
 	server->wl_display = wl_display_create();
-	
+
+	/* Initialize all wl_lists early so that cleanup paths (goto err) can
+	 * safely iterate or wl_list_remove on them regardless of how far init
+	 * got before failure. */
+	wl_list_init(&server->layer_surfaces);
+	wl_list_init(&server->idle_inhibitors);
+	wl_list_init(&server->outputs);
+	wl_list_init(&server->toplevels);
+	wl_list_init(&server->keyboards);
+
 	/* The backend is a wlroots feature which abstracts the underlying input and
 	 * output hardware. The autocreate option will choose the most suitable
 	 * backend based on the current environment, such as opening an X11 window
@@ -156,11 +257,32 @@ bool server_init(struct uwm_server *server) {
 		wlr_log(WLR_ERROR, "If running on a TTY, ensure a session manager is available:");
 		wlr_log(WLR_ERROR, "  - seatd (recommended): https://git.sr.ht/~kennylevinsen/seatd");
 		wlr_log(WLR_ERROR, "  - elogind: https://github.com/elogind/elogind");
+		wl_display_destroy(server->wl_display);
 		return false;
 	}
 	if (server->session == NULL) {
 		wlr_log(WLR_ERROR, "No session backend available. VT switching will not work.");
 		wlr_log(WLR_ERROR, "Install seatd or elogind for session management.");
+	} else {
+		g_sentinel_server = server;
+
+		server->session_active.notify = handle_session_active;
+		wl_signal_add(&server->session->events.active, &server->session_active);
+		write(STDERR_FILENO, "UWM: session_active listener registered\n", 41);
+
+		/* Insert a sentinel at the HEAD of the signal list.
+		 * This fires BEFORE all other listeners (DRM, libinput, and
+		 * our main handler). The sentinel calls our handler early
+		 * so it runs even if a later listener crashes. */
+		g_session_active_sentinel.notify = handle_session_active_sentinel;
+		wl_list_insert(&server->session->events.active.listener_list,
+			&g_session_active_sentinel.link);
+		write(STDERR_FILENO, "UWM: sentinel listener inserted at HEAD\n", 41);
+
+		/* Save listener list for crash recovery in main().
+		 * Must happen after ALL session listeners are registered. */
+		uwm_save_session_listeners(server);
+		write(STDERR_FILENO, "UWM: saved listener list for crash recovery\n", 44);
 	}
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -170,6 +292,10 @@ bool server_init(struct uwm_server *server) {
 	server->renderer = wlr_renderer_autocreate(server->backend);
 	if (server->renderer == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_renderer");
+		wlr_backend_destroy(server->backend);
+		if (server->session)
+			wlr_session_destroy(server->session);
+		wl_display_destroy(server->wl_display);
 		return false;
 	}
 
@@ -190,6 +316,12 @@ bool server_init(struct uwm_server *server) {
 	server->allocator = wlr_allocator_autocreate(server->backend, server->renderer);
 	if (server->allocator == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_allocator");
+		wl_list_remove(&server->renderer_lost.link);
+		wlr_renderer_destroy(server->renderer);
+		wlr_backend_destroy(server->backend);
+		if (server->session)
+			wlr_session_destroy(server->session);
+		wl_display_destroy(server->wl_display);
 		return false;
 	}
 
@@ -200,7 +332,7 @@ bool server_init(struct uwm_server *server) {
 	 * to dig your fingers in and play with their behavior if you want. Note that
 	 * the clients cannot set the selection directly without compositor approval,
 	 * see the handling of the request_set_selection event below.*/
-	wlr_compositor_create(server->wl_display, 5, server->renderer);
+	server->compositor = wlr_compositor_create(server->wl_display, 5, server->renderer);
 	wlr_subcompositor_create(server->wl_display);
 	wlr_data_device_manager_create(server->wl_display);
 	wlr_primary_selection_v1_device_manager_create(server->wl_display);
@@ -218,10 +350,11 @@ bool server_init(struct uwm_server *server) {
 			&server->transient_seat_create);
 	}
 
-	/* Handle SIGTERM/SIGINT via the Wayland event loop so we can
-	 * cleanly shut down (destroy clients, release DRM master, etc.) */
+	/* Handle SIGINT via the Wayland event loop so we can cleanly
+	 * shut down (destroy clients, release DRM master, etc.).
+	 * SIGTERM is ignored (see above) to prevent logind from killing
+	 * the compositor during VT switch — use Ctrl+C (SIGINT) to exit. */
 	struct wl_event_loop *loop = wl_display_get_event_loop(server->wl_display);
-	wl_event_loop_add_signal(loop, SIGTERM, handle_term_signal, server);
 	wl_event_loop_add_signal(loop, SIGINT, handle_term_signal, server);
 
 	/* Creates an output layout, which a wlroots utility for working with an
@@ -278,7 +411,6 @@ bool server_init(struct uwm_server *server) {
 	 * used for application windows. For more detail on shells, refer to
 	 * https://drewdevault.com/2018/07/29/Wayland-shells.html.
 	 */
-	wl_list_init(&server->toplevels);
 	server->xdg_shell = wlr_xdg_shell_create(server->wl_display, 3);
 	server->new_xdg_toplevel.notify = server_new_xdg_toplevel;
 	wl_signal_add(&server->xdg_shell->events.new_toplevel, &server->new_xdg_toplevel);
@@ -374,7 +506,6 @@ bool server_init(struct uwm_server *server) {
 	 * pointer, touch, and drawing tablet device. We also rig up a listener to
 	 * let us know when new input devices are available on the backend.
 	 */
-	wl_list_init(&server->keyboards);
 	server->new_input.notify = server_new_input;
 	wl_signal_add(&server->backend->events.new_input, &server->new_input);
 	server->seat = wlr_seat_create(server->wl_display, "seat0");
@@ -400,38 +531,32 @@ bool server_init(struct uwm_server *server) {
 	/* Initialize layer shell protocol */
 	if (!layer_shell_create(server)) {
 		wlr_log(WLR_ERROR, "Failed to create layer shell");
-		return false;
+		goto err;
 	}
 
 	/* Initialize UWM bar protocol */
 	if (!uwm_bar_manager_create(server)) {
 		wlr_log(WLR_ERROR, "Failed to create UWM bar manager");
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 
 	/* Initialize idle inhibit protocol */
 	if (!idle_inhibit_create(server)) {
 		wlr_log(WLR_ERROR, "Failed to create idle inhibit");
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 
 	/* Initialize session lock protocol */
 	if (!session_lock_create(server)) {
 		wlr_log(WLR_ERROR, "Failed to create session lock");
-		idle_inhibit_destroy(server);
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 
 	/* Initialize screencopy protocol */
 	server->screencopy_manager = wlr_screencopy_manager_v1_create(server->wl_display);
 	if (!server->screencopy_manager) {
 		wlr_log(WLR_ERROR, "Failed to create screencopy manager");
-		idle_inhibit_destroy(server);
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 
 	/* Initialize ext-image-copy-capture protocol for per-window screen sharing.
@@ -443,9 +568,7 @@ bool server_init(struct uwm_server *server) {
 		wlr_ext_image_copy_capture_manager_v1_create(server->wl_display, 1);
 	if (!server->ext_image_copy_capture_manager) {
 		wlr_log(WLR_ERROR, "Failed to create ext image copy capture manager");
-		idle_inhibit_destroy(server);
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 	server->new_capture_session.notify = handle_new_capture_session;
 	wl_signal_add(&server->ext_image_copy_capture_manager->events.new_session,
@@ -456,9 +579,7 @@ bool server_init(struct uwm_server *server) {
 	server->export_dmabuf_manager = wlr_export_dmabuf_manager_v1_create(server->wl_display);
 	if (!server->export_dmabuf_manager) {
 		wlr_log(WLR_ERROR, "Failed to create export dmabuf manager");
-		idle_inhibit_destroy(server);
-		layer_shell_destroy(server);
-		return false;
+		goto err;
 	}
 
 	/* Output capture source manager — lets portal/clients select a specific
@@ -499,20 +620,55 @@ bool server_init(struct uwm_server *server) {
 	}
 
 	return true;
-}
 
-void server_finish(struct uwm_server *server) {
-	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
-	wl_display_destroy_clients(server->wl_display);
-
-	/* Clean up layer shell, idle inhibit, session lock, screencopy, and bar */
-	layer_shell_destroy(server);
-	idle_inhibit_destroy(server);
-	session_lock_destroy(server);
+err:
 	uwm_bar_manager_destroy(server);
+	session_lock_destroy(server);
+	idle_inhibit_destroy(server);
+	layer_shell_destroy(server);
 
 	config_finish(&server->config);
 	workspace_manager_finish(&server->workspaces, &server->bsp_pool);
+
+	if (server->scene)
+		wlr_scene_node_destroy(&server->scene->tree.node);
+	if (server->cursor_mgr)
+		wlr_xcursor_manager_destroy(server->cursor_mgr);
+	if (server->cursor)
+		wlr_cursor_destroy(server->cursor);
+	if (server->allocator)
+		wlr_allocator_destroy(server->allocator);
+	if (server->renderer)
+		wlr_renderer_destroy(server->renderer);
+	if (server->backend)
+		wlr_backend_destroy(server->backend);
+	if (server->session)
+		wlr_session_destroy(server->session);
+	wl_display_destroy(server->wl_display);
+	return false;
+}
+
+void server_finish(struct uwm_server *server) {
+	write(STDERR_FILENO, "UWM: server_finish BEGIN\n", 25);
+	wlr_log(WLR_ERROR, "SERVER_FINISH BEGIN");
+
+	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
+	wl_display_destroy_clients(server->wl_display);
+	wlr_log(WLR_ERROR, "SERVER_FINISH clients destroyed");
+
+	/* Clean up layer shell, idle inhibit, session lock, screencopy, and bar */
+	layer_shell_destroy(server);
+	wlr_log(WLR_ERROR, "SERVER_FINISH layer_shell");
+	idle_inhibit_destroy(server);
+	wlr_log(WLR_ERROR, "SERVER_FINISH idle_inhibit");
+	session_lock_destroy(server);
+	wlr_log(WLR_ERROR, "SERVER_FINISH session_lock");
+	uwm_bar_manager_destroy(server);
+	wlr_log(WLR_ERROR, "SERVER_FINISH uwm_bar");
+
+	config_finish(&server->config);
+	workspace_manager_finish(&server->workspaces, &server->bsp_pool);
+	wlr_log(WLR_ERROR, "SERVER_FINISH config/workspace");
 
 	wl_list_remove(&server->new_xdg_toplevel.link);
 	wl_list_remove(&server->new_xdg_popup.link);
@@ -551,19 +707,38 @@ void server_finish(struct uwm_server *server) {
 
 	wl_list_remove(&server->new_output.link);
 	wl_list_remove(&server->output_layout_change.link);
+	wl_list_remove(&server->output_manager_apply.link);
+	wl_list_remove(&server->output_manager_test.link);
 
 	wl_list_remove(&server->renderer_lost.link);
 
+	if (server->session) {
+		wl_list_remove(&g_session_active_sentinel.link);
+		wl_list_remove(&server->session_active.link);
+	}
+
+	wlr_log(WLR_ERROR, "SERVER_FINISH listeners removed");
+
 	/* Destroy backend before scene so output destroy handlers
 	 * can safely access per-output scene nodes. */
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying backend");
 	wlr_backend_destroy(server->backend);
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying scene");
 	wlr_scene_node_destroy(&server->scene->tree.node);
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying cursor_mgr");
 	wlr_xcursor_manager_destroy(server->cursor_mgr);
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying cursor");
 	wlr_cursor_destroy(server->cursor);
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying allocator");
 	wlr_allocator_destroy(server->allocator);
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying renderer");
 	wlr_renderer_destroy(server->renderer);
 	if (server->session) {
+		wlr_log(WLR_ERROR, "SERVER_FINISH destroying session");
 		wlr_session_destroy(server->session);
 	}
+	wlr_log(WLR_ERROR, "SERVER_FINISH destroying wl_display");
 	wl_display_destroy(server->wl_display);
+	wlr_log(WLR_ERROR, "SERVER_FINISH END");
+	write(STDERR_FILENO, "UWM: server_finish END\n", 23);
 }
