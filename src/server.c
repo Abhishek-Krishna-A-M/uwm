@@ -32,29 +32,16 @@ static int handle_term_signal(int signo, void *data) {
 
 static void handle_renderer_lost(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, renderer_lost);
-
-	/* The renderer-lost signal is spurious during VT switch (DRM master
-	 * drop). The wlroots DRM backend restores the GPU context when the
-	 * session becomes active again. Ignore the signal entirely — recreating
-	 * the renderer destroys GPU resources still referenced by the scene
-	 * graph (use-after-free), and terminating triggers a crash in cleanup. */
 }
 
 static void handle_session_active(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, session_active);
-	const char *msg;
 
 	if (server->session->active) {
-		msg = "SESSION_ACTIVE signal: active=true\n";
-		write(STDERR_FILENO, msg, strlen(msg));
-
 		struct uwm_output *output;
 		wl_list_for_each(output, &server->outputs, link) {
 			wlr_output_schedule_frame(output->wlr_output);
 		}
-	} else {
-		msg = "SESSION_ACTIVE signal: active=false\n";
-		write(STDERR_FILENO, msg, strlen(msg));
 	}
 }
 
@@ -143,9 +130,6 @@ static void handle_new_capture_session(struct wl_listener *listener, void *data)
 	struct wlr_ext_image_copy_capture_session_v1 *session = data;
 	wlr_log(WLR_INFO, "New ext-image-copy-capture session created for source %p",
 		(void *)session->source);
-	/* Damage all scene outputs to trigger immediate frame delivery.
-	 * The session's internal WLR_PRIVATE listeners will pick up the
-	 * rendered frame and deliver it to the client. */
 	struct uwm_output *output;
 	wl_list_for_each(output, &server->outputs, link) {
 		wlr_output_schedule_frame(output->wlr_output);
@@ -306,7 +290,6 @@ bool server_init(struct uwm_server *server) {
 	 * screen capture. */
 	wlr_renderer_init_wl_shm(server->renderer, server->wl_display);
 
-	/* Listen for renderer loss (GPU reset, VT switch context loss) */
 	server->renderer_lost.notify = handle_renderer_lost;
 	wl_signal_add(&server->renderer->events.lost, &server->renderer_lost);
 

@@ -403,6 +403,16 @@ int main(int argc, char **argv) {
 	close(state.notify_fds[1]);
 
 	wl_display_disconnect(state.display);
+
+	if (state.running) {
+		/* Unexpected disconnect (e.g. compositor crash recovery during VT
+		 * switch). Re-exec ourselves to reconnect. */
+		LOG("unexpected disconnect, reconnecting...");
+		execvp(argv[0], argv);
+		LOG("exec failed: %s", strerror(errno));
+		return 1;
+	}
+
 	LOG("clean exit");
 	return 0;
 }
