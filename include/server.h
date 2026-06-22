@@ -82,7 +82,6 @@ struct uwm_server {
 	struct uwm_workspace_manager workspaces;
 	struct wlr_session *session;
 	struct uwm_config config;
-	struct wl_listener renderer_lost;
 	uint32_t last_button_serial;
 
 	/* Layer shell support */

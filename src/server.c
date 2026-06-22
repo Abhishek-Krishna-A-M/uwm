@@ -29,12 +29,6 @@ static int handle_scene_dump_timer(void *data) {
 	return 0;
 }
 
-static void handle_renderer_lost(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, renderer_lost);
-	wlr_log(WLR_ERROR, "Renderer lost (GPU may have been reset). Terminating.");
-	wl_display_terminate(server->wl_display);
-}
-
 static void handle_transient_seat_create(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, transient_seat_create);
 	struct wlr_transient_seat_v1 *transient_seat = data;
@@ -98,10 +92,6 @@ bool server_init(struct uwm_server *server) {
 	 * xdg-desktop-portal-wlr gets proper DMA-BUF format/modifier info for
 	 * screen capture. */
 	wlr_renderer_init_wl_shm(server->renderer, server->wl_display);
-
-	/* Listen for renderer loss (GPU reset, VT switch context loss) */
-	server->renderer_lost.notify = handle_renderer_lost;
-	wl_signal_add(&server->renderer->events.lost, &server->renderer_lost);
 
 	/* Autocreates an allocator for us.
 	 * The allocator is the bridge between the renderer and the backend. It
@@ -365,8 +355,6 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->request_set_primary_selection.link);
 
 	wl_list_remove(&server->new_output.link);
-
-	wl_list_remove(&server->renderer_lost.link);
 
 	wlr_scene_node_destroy(&server->scene->tree.node);
 	wlr_xcursor_manager_destroy(server->cursor_mgr);

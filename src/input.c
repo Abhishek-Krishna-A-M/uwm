@@ -452,8 +452,14 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	idx = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_LOGO);
 	if (idx != XKB_MOD_INVALID) logo_mask = (xkb_mod_mask_t)1 << idx;
 
-	/* VT switching (Ctrl+Alt+F[1-12]) — uses hardware keycodes for
-	 * correctness with wlroots 0.20 timing */
+	/* Check for VT switching (Ctrl+Alt+F[1-12]).
+	 * NOTE: We check the hardware keycodes here instead of relying on
+	 * wlr_keyboard_get_modifiers() because wlroots 0.20 emits the key
+	 * event BEFORE updating the XKB/modifier state. If F1 arrives in
+	 * between Ctrl and Alt processing (common with simultaneous key
+	 * presses), the XKB modifier state would miss the Alt modifier.
+	 * The keycodes array is updated before the key event, so it always
+	 * reflects all physically held keys. */
 	bool ctrl_held = false, alt_held = false;
 	for (size_t i = 0; i < keyboard->wlr_keyboard->num_keycodes; i++) {
 		uint32_t kc = keyboard->wlr_keyboard->keycodes[i];
@@ -465,17 +471,21 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (int i = 0; i < nsyms; i++) {
 			unsigned vt = 0;
-			if (syms_copy[i] >= XKB_KEY_F1 && syms_copy[i] <= XKB_KEY_F12)
-				vt = syms_copy[i] - XKB_KEY_F1 + 1;
-			else if (syms_copy[i] >= XKB_KEY_XF86Switch_VT_1
-					&& syms_copy[i] <= XKB_KEY_XF86Switch_VT_12)
-				vt = syms_copy[i] - XKB_KEY_XF86Switch_VT_1 + 1;
+			if (syms[i] >= XKB_KEY_F1 && syms[i] <= XKB_KEY_F12) {
+				vt = syms[i] - XKB_KEY_F1 + 1;
+			} else if (syms[i] >= XKB_KEY_XF86Switch_VT_1
+					&& syms[i] <= XKB_KEY_XF86Switch_VT_12) {
+				vt = syms[i] - XKB_KEY_XF86Switch_VT_1 + 1;
+			}
 			if (vt > 0) {
 				if (server->session) {
-					if (wlr_session_change_vt(server->session, vt))
-						wlr_log(WLR_INFO, "Switched to VT %u", vt);
-					else
-						wlr_log(WLR_ERROR, "VT switch to %u failed", vt);
+					if (wlr_session_change_vt(server->session, vt)) {
+						wlr_log(WLR_INFO,
+							"Switched to VT %u", vt);
+					} else {
+						wlr_log(WLR_ERROR,
+							"VT switch to %u failed", vt);
+					}
 				} else {
 					wlr_log(WLR_ERROR,
 						"VT switching unavailable: no session backend."

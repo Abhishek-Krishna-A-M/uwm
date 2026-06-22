@@ -201,6 +201,8 @@ static void handle_surface_commit(struct wl_listener *listener, void *data) {
 static void handle_map(struct wl_listener *listener, void *data) {
 	struct uwm_layer_surface *surface =
 		wl_container_of(listener, surface, map);
+	if (!surface->output)
+		return;
 	struct uwm_server *server = surface->output->server;
 	(void)data;
 
@@ -224,6 +226,8 @@ static void handle_map(struct wl_listener *listener, void *data) {
 static void handle_unmap(struct wl_listener *listener, void *data) {
 	struct uwm_layer_surface *surface =
 		wl_container_of(listener, surface, unmap);
+	if (!surface->output)
+		return;
 	struct uwm_server *server = surface->output->server;
 	(void)data;
 

@@ -100,6 +100,14 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 	struct uwm_output *output = wl_container_of(listener, output, destroy);
 	struct uwm_server *server = output->server;
 
+	/* Invalidate output pointer on all layer surfaces referencing this
+	 * output so that unmap handlers don't access freed memory */
+	struct uwm_layer_surface *ls;
+	wl_list_for_each(ls, &server->layer_surfaces, link) {
+		if (ls->output == output)
+			ls->output = NULL;
+	}
+
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
 	wl_list_remove(&output->destroy.link);
