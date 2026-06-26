@@ -361,7 +361,7 @@ int main(int argc, char **argv) {
 			uint64_t exp;
 			read(state.timer_fd, &exp, sizeof(exp));
 			state.slow_timer++;
-			if (state.slow_timer >= 2) {
+			if (state.slow_timer >= 1) {
 				state.slow_timer = 0;
 				if (data_update_slow_timer(&state))
 					state.need_redraw = true;
@@ -426,6 +426,8 @@ int main(int argc, char **argv) {
 		wl_shm_destroy(state.shm);
 	if (state.layer_shell)
 		zwlr_layer_shell_v1_destroy(state.layer_shell);
+
+	input_destroy(&state);
 
 	if (state.font_desc)
 		pango_font_description_free(state.font_desc);

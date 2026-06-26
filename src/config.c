@@ -27,6 +27,7 @@ const char *voldown[] = { VOLDOWN };
 const char *volmute[] = { VOLMUTE };
 const char *brup[] = { BRUP };
 const char *brdown[] = { BRDOWN };
+const char *refresh_bar[] = { REFRESH_BAR };
 
 /* key binding arrays */
 const struct key keys[] = { KEYS };

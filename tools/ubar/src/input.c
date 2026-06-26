@@ -6,9 +6,58 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <linux/uinput.h>
 
 static State *g_state = NULL;
+
+static int uinput_init(void) {
+	int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+	if (fd < 0) {
+		LOG("uinput_init: open failed: %m");
+		return -1;
+	}
+
+	ioctl(fd, UI_SET_EVBIT, EV_KEY);
+	ioctl(fd, UI_SET_KEYBIT, KEY_CAPSLOCK);
+	ioctl(fd, UI_SET_KEYBIT, KEY_NUMLOCK);
+
+	struct uinput_setup usetup = {
+		.name = "ubar-kbd",
+		.id = { .bustype = BUS_USB, .vendor = 1, .product = 1, .version = 1 }
+	};
+	ioctl(fd, UI_DEV_SETUP, &usetup);
+	if (ioctl(fd, UI_DEV_CREATE) < 0) {
+		LOG("uinput_init: UI_DEV_CREATE failed: %m");
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
+static void uinput_send_key(int fd, unsigned int keycode) {
+	if (fd < 0) return;
+
+	struct input_event ev = {
+		.type = EV_KEY,
+		.code = keycode,
+		.value = 1
+	};
+	write(fd, &ev, sizeof(ev));
+
+	ev.value = 0;
+	write(fd, &ev, sizeof(ev));
+
+	struct input_event syn = {
+		.type = EV_SYN,
+		.code = SYN_REPORT,
+		.value = 0
+	};
+	write(fd, &syn, sizeof(syn));
+}
 
 static void pointer_enter(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
@@ -77,6 +126,14 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 			execlp("uwm", "uwm", "-t", "workspace", id_str, NULL);
 			_exit(0);
 		}
+		break;
+
+	case ZONE_CAPS:
+		uinput_send_key(state->uinput_fd, KEY_CAPSLOCK);
+		break;
+
+	case ZONE_NUM:
+		uinput_send_key(state->uinput_fd, KEY_NUMLOCK);
 		break;
 
 	default:
@@ -151,5 +208,14 @@ static const struct wl_seat_listener seat_listener = {
 void input_init(State *state, struct wl_seat *seat) {
 	g_state = state;
 	state->seat = seat;
+	state->uinput_fd = uinput_init();
 	wl_seat_add_listener(seat, &seat_listener, state);
+}
+
+void input_destroy(State *state) {
+	if (state->uinput_fd >= 0) {
+		ioctl(state->uinput_fd, UI_DEV_DESTROY);
+		close(state->uinput_fd);
+		state->uinput_fd = -1;
+	}
 }

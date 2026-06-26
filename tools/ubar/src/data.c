@@ -8,7 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
-#include <sys/sysinfo.h>
+
 #include <pthread.h>
 #include <errno.h>
 #include <dirent.h>
@@ -129,15 +129,19 @@ bool data_update_temp(State *state) {
 	return false;
 }
 
-/* --- Memory (sysinfo syscall, no /proc parse) --- */
+/* --- Memory (from /proc/meminfo MemAvailable) --- */
 
 bool data_update_memory(State *state) {
-	struct sysinfo si;
-	if (sysinfo(&si) < 0) return false;
+	FILE *f = fopen("/proc/meminfo", "r");
+	if (!f) return false;
 
-	unsigned long total_kb = si.totalram * si.mem_unit / 1024;
-	unsigned long free_kb = si.freeram * si.mem_unit / 1024;
-	unsigned long avail_kb = free_kb + si.bufferram * si.mem_unit / 1024;
+	unsigned long total_kb = 0, avail_kb = 0;
+	char line[128];
+	while (fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "MemTotal: %lu kB", &total_kb) == 1) continue;
+		if (sscanf(line, "MemAvailable: %lu kB", &avail_kb) == 1) break;
+	}
+	fclose(f);
 
 	if (total_kb == 0) return false;
 	int new_pct = (int)((total_kb - avail_kb) * 100 / total_kb);
@@ -253,9 +257,23 @@ struct audio_monitor_state {
 	char default_sink[256];
 };
 
+static int audio_init_retries = 0;
+
 static void audio_sink_info_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
 	struct audio_monitor_state *ams = userdata;
-	if (eol || !i) return;
+	if (eol || !i) {
+		/* PipeWire may not have sinks ready at boot — retry with backoff */
+		if (g_vol_pct == 0 && g_monitors_running && audio_init_retries < 10) {
+			audio_init_retries++;
+			usleep(500000); /* 500ms */
+			pa_operation *op = pa_context_get_sink_info_by_name(c,
+				ams->default_sink[0] ? ams->default_sink : NULL,
+				audio_sink_info_cb, ams);
+			if (op) pa_operation_unref(op);
+		}
+		return;
+	}
+	audio_init_retries = 0;
 
 	bool changed = false;
 	pthread_mutex_lock(&g_data_mutex);
@@ -299,11 +317,10 @@ static void audio_context_state_cb(pa_context *c, void *userdata) {
 		if (op) pa_operation_unref(op);
 
 		/* Read initial volume */
-		if (ams->default_sink[0]) {
-			op = pa_context_get_sink_info_by_name(c, ams->default_sink,
-				audio_sink_info_cb, ams);
-			if (op) pa_operation_unref(op);
-		}
+		op = pa_context_get_sink_info_by_name(c,
+			ams->default_sink[0] ? ams->default_sink : NULL,
+			audio_sink_info_cb, ams);
+		if (op) pa_operation_unref(op);
 		break;
 	}
 	case PA_CONTEXT_FAILED:
@@ -346,12 +363,10 @@ static void *audio_monitor_thread(void *arg) {
 		pa_context_unref(tmp_ctx);
 	}
 
-	/* Use @DEFAULT_AUDIO_SINK@ via environment or fallback to common names */
+	/* Use PULSE_SINK env var, or NULL for PA default sink */
 	const char *sink_env = getenv("PULSE_SINK");
 	if (sink_env)
 		snprintf(ams.default_sink, sizeof(ams.default_sink), "%s", sink_env);
-	else
-		snprintf(ams.default_sink, sizeof(ams.default_sink), "@DEFAULT_AUDIO_SINK@");
 
 	pa_context_set_state_callback(ams.context, audio_context_state_cb, &ams);
 
@@ -569,6 +584,7 @@ bool data_update_slow_timer(State *state) {
 	changed |= data_update_cpu(state);
 	changed |= data_update_temp(state);
 	changed |= data_update_memory(state);
+	changed |= data_update_locks_hardware(state);
 	return changed;
 }
 

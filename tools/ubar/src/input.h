@@ -4,5 +4,6 @@
 #include "ubar.h"
 
 void input_init(State *state, struct wl_seat *seat);
+void input_destroy(State *state);
 
 #endif

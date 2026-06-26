@@ -198,7 +198,8 @@ void render_frame(State *state) {
 		lx += tw;
 	}
 
-	char keys_str[64] = {0};
+	char caps_str[16] = {0};
+	char num_str[16] = {0};
 	char hdmi_str[16] = {0};
 	char mem_str[MAX_STR] = {0};
 	char vol_str[MAX_STR] = {0};
@@ -206,9 +207,9 @@ void render_frame(State *state) {
 	char net_str[128] = {0};
 
 	if (state->caps)
-		strcat(keys_str, "[CAPS] ");
+		snprintf(caps_str, sizeof(caps_str), "[CAPS]");
 	if (state->num)
-		strcat(keys_str, "[NUM] ");
+		snprintf(num_str, sizeof(num_str), "[NUM]");
 	if (state->hdmi)
 		snprintf(hdmi_str, sizeof(hdmi_str), "[HDMI]");
 
@@ -246,7 +247,8 @@ void render_frame(State *state) {
 		{ vol_str,         ZONE_VOLUME,  state->fg_color },
 		{ mem_str,         ZONE_RAM,     state->ram_pct > 85 ? WARNING_COLOR : state->fg_color },
 		{ hdmi_str,        ZONE_NONE,    state->fg_color },
-		{ keys_str,        ZONE_NONE,    WARNING_COLOR },
+		{ caps_str,        ZONE_CAPS,    WARNING_COLOR },
+		{ num_str,         ZONE_NUM,     WARNING_COLOR },
 	};
 	int item_count = sizeof(items) / sizeof(items[0]);
 

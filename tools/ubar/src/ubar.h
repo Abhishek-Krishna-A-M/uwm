@@ -41,7 +41,9 @@ typedef struct {
 		ZONE_RAM,
 		ZONE_VOLUME,
 		ZONE_NETWORK,
-		ZONE_TIME
+		ZONE_TIME,
+		ZONE_CAPS,
+		ZONE_NUM
 	} type;
 	int data;
 } HotZone;
@@ -117,6 +119,7 @@ typedef struct {
 	int battery_pipe[2];
 	int network_pipe[2];
 	int display_pipe[2];
+	int uinput_fd;
 
 	/* Partial damage: previous frame item positions */
 	int prev_zones[MAX_ZONES];

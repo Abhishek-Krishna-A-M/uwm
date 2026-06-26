@@ -45,6 +45,7 @@
 #define VOLMUTE     "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", NULL
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
+#define REFRESH_BAR "sh", "-c", "killall -9 ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
 
 /* key binding list helper */
 #define KEY(m, s, f, a) { m, s, f, a },
@@ -131,6 +132,7 @@
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_f, spawn, { .argv = findfile }) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_x, spawn, { .argv = powermenu }) \
 	KEY(MOD | WLR_MODIFIER_SHIFT, XKB_KEY_s, spawn, { .argv = screenshot_clip }) \
+	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_r, spawn, { .argv = refresh_bar }) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_q, quit, {0})
 
 /* unmodified key bindings (no modifier required) */
