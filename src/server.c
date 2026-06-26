@@ -22,9 +22,6 @@
 
 static int handle_term_signal(int signo, void *data) {
 	struct uwm_server *server = data;
-	char buf[128];
-	int n = snprintf(buf, sizeof(buf), "UWM: handle_term_signal called with signo=%d\n", signo);
-	write(STDERR_FILENO, buf, n);
 	wlr_log(WLR_INFO, "Received signal %d, terminating compositor", signo);
 	wl_display_terminate(server->wl_display);
 	return 0;
@@ -86,17 +83,9 @@ void uwm_call_session_active(struct uwm_server *server) {
  * listener (libinput) crashes and kills the process.
  * Crash protection: main() wraps wl_display_run with sigsetjmp. */
 static struct wl_listener g_session_active_sentinel;
-static int g_session_active_signal_fired;
 static struct uwm_server *g_sentinel_server;
 
 static void handle_session_active_sentinel(struct wl_listener *listener, void *data) {
-	char dbg[128];
-	g_session_active_signal_fired++;
-
-	int n = snprintf(dbg, sizeof(dbg),
-		"SENTINEL FIRED: count=%d\n", g_session_active_signal_fired);
-	write(STDERR_FILENO, dbg, n);
-
 	/* Call our handler NOW, before the DRM/libinput handlers fire.
 	 * Crash recovery in main() catches any fatal signal and
 	 * rebuilds the listener list + calls our handler. */
@@ -110,6 +99,14 @@ static void handle_new_foreign_toplevel_capture_request(struct wl_listener *list
 
 	if (!toplevel)
 		return;
+
+	/* Lazily create the per-window capture scene on first request */
+	if (!toplevel->image_capture_scene) {
+		toplevel->image_capture_scene = wlr_scene_create();
+		toplevel->image_capture_scene->restack_xwayland_surfaces = false;
+		wlr_scene_xdg_surface_create(&toplevel->image_capture_scene->tree,
+			toplevel->xdg_toplevel->base);
+	}
 
 	struct wlr_ext_image_capture_source_v1 *source =
 		wlr_ext_image_capture_source_v1_create_with_scene_node(
@@ -252,7 +249,6 @@ bool server_init(struct uwm_server *server) {
 
 		server->session_active.notify = handle_session_active;
 		wl_signal_add(&server->session->events.active, &server->session_active);
-		write(STDERR_FILENO, "UWM: session_active listener registered\n", 41);
 
 		/* Insert a sentinel at the HEAD of the signal list.
 		 * This fires BEFORE all other listeners (DRM, libinput, and
@@ -261,12 +257,10 @@ bool server_init(struct uwm_server *server) {
 		g_session_active_sentinel.notify = handle_session_active_sentinel;
 		wl_list_insert(&server->session->events.active.listener_list,
 			&g_session_active_sentinel.link);
-		write(STDERR_FILENO, "UWM: sentinel listener inserted at HEAD\n", 41);
 
 		/* Save listener list for crash recovery in main().
 		 * Must happen after ALL session listeners are registered. */
 		uwm_save_session_listeners(server);
-		write(STDERR_FILENO, "UWM: saved listener list for crash recovery\n", 44);
 	}
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -632,26 +626,19 @@ err:
 }
 
 void server_finish(struct uwm_server *server) {
-	write(STDERR_FILENO, "UWM: server_finish BEGIN\n", 25);
-	wlr_log(WLR_ERROR, "SERVER_FINISH BEGIN");
+	wlr_log(WLR_INFO, "SERVER_FINISH BEGIN");
 
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
-	wlr_log(WLR_ERROR, "SERVER_FINISH clients destroyed");
 
 	/* Clean up layer shell, idle inhibit, session lock, screencopy, and bar */
 	layer_shell_destroy(server);
-	wlr_log(WLR_ERROR, "SERVER_FINISH layer_shell");
 	idle_inhibit_destroy(server);
-	wlr_log(WLR_ERROR, "SERVER_FINISH idle_inhibit");
 	session_lock_destroy(server);
-	wlr_log(WLR_ERROR, "SERVER_FINISH session_lock");
 	uwm_bar_manager_destroy(server);
-	wlr_log(WLR_ERROR, "SERVER_FINISH uwm_bar");
 
 	config_finish(&server->config);
 	workspace_manager_finish(&server->workspaces, &server->bsp_pool);
-	wlr_log(WLR_ERROR, "SERVER_FINISH config/workspace");
 
 	wl_list_remove(&server->new_xdg_toplevel.link);
 	wl_list_remove(&server->new_xdg_popup.link);
@@ -700,28 +687,16 @@ void server_finish(struct uwm_server *server) {
 		wl_list_remove(&server->session_active.link);
 	}
 
-	wlr_log(WLR_ERROR, "SERVER_FINISH listeners removed");
-
 	/* Destroy backend before scene so output destroy handlers
 	 * can safely access per-output scene nodes. */
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying backend");
 	wlr_backend_destroy(server->backend);
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying scene");
 	wlr_scene_node_destroy(&server->scene->tree.node);
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying cursor_mgr");
 	wlr_xcursor_manager_destroy(server->cursor_mgr);
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying cursor");
 	wlr_cursor_destroy(server->cursor);
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying allocator");
 	wlr_allocator_destroy(server->allocator);
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying renderer");
 	wlr_renderer_destroy(server->renderer);
-	if (server->session) {
-		wlr_log(WLR_ERROR, "SERVER_FINISH destroying session");
+	if (server->session)
 		wlr_session_destroy(server->session);
-	}
-	wlr_log(WLR_ERROR, "SERVER_FINISH destroying wl_display");
 	wl_display_destroy(server->wl_display);
-	wlr_log(WLR_ERROR, "SERVER_FINISH END");
-	write(STDERR_FILENO, "UWM: server_finish END\n", 23);
+	wlr_log(WLR_INFO, "SERVER_FINISH END");
 }

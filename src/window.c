@@ -43,7 +43,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 
 	const char *new_app_id = toplevel->xdg_toplevel->app_id;
 	const char *new_title = toplevel->xdg_toplevel->title;
-	wlr_log(WLR_INFO, "FOCUS: new app_id=%s title=%s",
+	wlr_log(WLR_DEBUG, "FOCUS: new app_id=%s title=%s",
 		new_app_id ? new_app_id : "(nil)", new_title ? new_title : "(nil)");
 	if (prev_surface) {
 		struct wlr_xdg_toplevel *prev_toplevel = wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
@@ -87,11 +87,17 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		}
 	}
 
-	/* Update display for workspace-level monocle */
+	/* Update display for workspace-level monocle: only the focused
+	 * window should be visible. Callers already handle positioning
+	 * via their own bsp_arrange() call, so we only toggle visibility
+	 * here to avoid redundant full layout recomputation. */
 	if (ws->monocle) {
-		int x, y, out_w, out_h;
-		get_output_size(ws, &x, &y, &out_w, &out_h);
-		bsp_arrange(ws, x, y, out_w, out_h, server->config.inner_gap);
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+			if (!tl->floating && !tl->fullscreen)
+				wlr_scene_node_set_enabled(&tl->scene_tree->node,
+					tl == toplevel);
+		}
 	}
 
 	if (toplevel->floating) {
@@ -115,7 +121,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		&toplevel->scene_tree->node, set_window_opacity, &full);
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
-		wlr_log(WLR_INFO, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
+		wlr_log(WLR_DEBUG, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
 			(void *)surface,
 			toplevel->xdg_toplevel->app_id ? toplevel->xdg_toplevel->app_id : "(nil)",
 			toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(nil)");
@@ -239,7 +245,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	const char *app_id = toplevel->xdg_toplevel->app_id;
 	const char *title = toplevel->xdg_toplevel->title;
 	struct wlr_seat *seat = toplevel->server->seat;
-	wlr_log(WLR_INFO, "MAP: app_id=%s title=%s kb_focus_before=%p",
+	wlr_log(WLR_DEBUG, "MAP: app_id=%s title=%s kb_focus_before=%p",
 		app_id ? app_id : "(nil)", title ? title : "(nil)",
 		(void *)seat->keyboard_state.focused_surface);
 
@@ -360,7 +366,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	const char *app_id = toplevel->xdg_toplevel->app_id;
 	const char *title = toplevel->xdg_toplevel->title;
 	struct wlr_seat *seat = toplevel->server->seat;
-	wlr_log(WLR_INFO, "UNMAP: app_id=%s title=%s kb_focused_surface=%p",
+	wlr_log(WLR_DEBUG, "UNMAP: app_id=%s title=%s kb_focused_surface=%p",
 		app_id ? app_id : "(nil)", title ? title : "(nil)",
 		(void *)seat->keyboard_state.focused_surface);
 
@@ -392,10 +398,9 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
-		struct uwm_output *output;
-		wl_list_for_each(output, &toplevel->server->outputs, link) {
-			wlr_scene_node_set_enabled(&output->layer_top->node, true);
-			wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
+		if (ws->output) {
+			wlr_scene_node_set_enabled(&ws->output->layer_top->node, true);
+			wlr_scene_node_set_enabled(&ws->output->layer_overlay->node, true);
 		}
 	}
 
@@ -429,12 +434,12 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	}
 
 	if (focus_was_displaced && ws->focused) {
-		wlr_log(WLR_INFO, "UNMAP: restoring focus to app_id=%s title=%s",
+		wlr_log(WLR_DEBUG, "UNMAP: restoring focus to app_id=%s title=%s",
 			ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
 			ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
 		focus_toplevel(ws->focused);
 	} else if (!ws->focused) {
-		wlr_log(WLR_INFO, "UNMAP: no focused window, clearing keyboard focus");
+		wlr_log(WLR_DEBUG, "UNMAP: no focused window, clearing keyboard focus");
 		wlr_seat_keyboard_notify_clear_focus(seat);
 	}
 }
@@ -617,12 +622,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
 
-	/* Separate scene for per-window screen capture.
-	 * Using the main scene node captures everything at that position;
-	 * a dedicated scene captures only the window's own content. */
-	toplevel->image_capture_scene = wlr_scene_create();
-	toplevel->image_capture_scene->restack_xwayland_surfaces = false;
-	wlr_scene_xdg_surface_create(&toplevel->image_capture_scene->tree, xdg_toplevel->base);
+	/* image_capture_scene is created lazily on first capture request */
 
 	toplevel->map.notify = xdg_toplevel_map;
 	wl_signal_add(&xdg_toplevel->base->surface->events.map, &toplevel->map);

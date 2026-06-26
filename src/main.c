@@ -45,7 +45,17 @@ static void restore_crash_handlers(struct sigaction *old) {
 	sigaction(SIGILL, &old[4], NULL);
 }
 
-static const char *pid_dir = "/tmp/uwm-autostart";
+static char pid_dir[256];
+
+static void resolve_pid_dir(void)
+{
+	const char *rt = getenv("XDG_RUNTIME_DIR");
+	if (rt && rt[0]) {
+		snprintf(pid_dir, sizeof(pid_dir), "%s/uwm-autostart", rt);
+	} else {
+		snprintf(pid_dir, sizeof(pid_dir), "/tmp/uwm-autostart");
+	}
+}
 
 static void ensure_pid_dir(void)
 {
@@ -82,25 +92,6 @@ static bool pid_alive(int pid)
 	return kill(pid, 0) == 0 || errno == EPERM;
 }
 
-static struct uwm_poll_state {
-	struct wl_event_source *src;
-	struct uwm_server *server;
-} g_poll;
-
-static int check_session_poll(void *data) {
-	struct uwm_server *server = data;
-	char buf[128];
-
-	if (server->session) {
-		int n = snprintf(buf, sizeof(buf),
-			"UWM_POLL: session active=%d\n", server->session->active);
-		write(STDERR_FILENO, buf, n);
-	}
-	/* Re-arm for next poll in 2 seconds */
-	if (g_poll.src)
-		wl_event_source_timer_update(g_poll.src, 2000);
-	return 1;
-}
 
 static void spawn_cmd(const char *cmd)
 {
@@ -203,6 +194,8 @@ int main(int argc, char *argv[]) {
 
 	setenv("WAYLAND_DISPLAY", socket, true);
 
+	resolve_pid_dir();
+
 	/* Run compile-time autostart commands */
 	run_autostart();
 
@@ -210,16 +203,6 @@ int main(int argc, char *argv[]) {
 	if (startup_cmd)
 		spawn_cmd(startup_cmd);
 
-	/* Debug: poll session->active every 2 seconds */
-	{
-		struct wl_event_loop *evloop_ = wl_display_get_event_loop(server.wl_display);
-		if (evloop_) {
-			g_poll.server = &server;
-			g_poll.src = wl_event_loop_add_timer(evloop_, check_session_poll, &server);
-			if (g_poll.src)
-				wl_event_source_timer_update(g_poll.src, 2000);
-		}
-	}
 
 	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", socket);
 

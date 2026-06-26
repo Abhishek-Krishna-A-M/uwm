@@ -70,16 +70,21 @@ void layer_surface_arrange(struct uwm_output *output) {
 	arrange_surface(output, &full_area, &usable_area, output->layer_bottom, false);
 	arrange_surface(output, &full_area, &usable_area, output->layer_background, false);
 
-	/* Store usable area for window arrangement */
+	/* Only rearrange BSP if usable area actually changed */
+	bool changed = output->usable_area.x != usable_area.x
+		|| output->usable_area.y != usable_area.y
+		|| output->usable_area.width != usable_area.width
+		|| output->usable_area.height != usable_area.height;
 	output->usable_area = usable_area;
 
-	/* Rearrange only the workspace displayed on this output */
 	struct uwm_server *server = output->server;
-	struct uwm_workspace *ws = &server->workspaces.workspaces[output->current_workspace];
-	if (ws->root) {
-		bsp_arrange(ws, usable_area.x, usable_area.y,
-			usable_area.width, usable_area.height,
-			server->config.inner_gap);
+	if (changed) {
+		struct uwm_workspace *ws = &server->workspaces.workspaces[output->current_workspace];
+		if (ws->root) {
+			bsp_arrange(ws, usable_area.x, usable_area.y,
+				usable_area.width, usable_area.height,
+				server->config.inner_gap);
+		}
 	}
 
 	/* Find topmost keyboard-interactive exclusive layer and focus it */

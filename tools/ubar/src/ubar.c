@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
 	LOG("entering main loop (wl_fd=%d)", wl_fd);
 
 	while (state.running) {
-		if (state.need_redraw && state.configured && !state.frame_pending) {
+		if (state.need_redraw && state.configured) {
 			render_frame(&state);
 			state.need_redraw = false;
 		}

@@ -407,21 +407,8 @@ static void keyboard_repeat_stop(struct uwm_keyboard *keyboard) {
 static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
 	struct uwm_keyboard *keyboard = wl_container_of(listener, keyboard, modifiers);
 	uint32_t modifiers = wlr_keyboard_get_modifiers(keyboard->wlr_keyboard);
-	keyboard->cached_ctrl = 0;
-	keyboard->cached_alt = 0;
-	keyboard->cached_logo = 0;
-	keyboard->cached_shift = 0;
-	if (keyboard->wlr_keyboard->keymap) {
-		xkb_mod_index_t idx;
-		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_CTRL);
-		if (idx != XKB_MOD_INVALID) keyboard->cached_ctrl = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_ALT);
-		if (idx != XKB_MOD_INVALID) keyboard->cached_alt = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_LOGO);
-		if (idx != XKB_MOD_INVALID) keyboard->cached_logo = (xkb_mod_mask_t)1 << idx;
-		idx = xkb_keymap_mod_get_index(keyboard->wlr_keyboard->keymap, XKB_MOD_NAME_SHIFT);
-		if (idx != XKB_MOD_INVALID) keyboard->cached_shift = (xkb_mod_mask_t)1 << idx;
-	}
+	/* Modifier indices are constant per keymap — cached once at keyboard
+	 * creation. No need to recompute them on every modifier change. */
 	if (!(modifiers & keyboard->cached_logo))
 		keyboard_repeat_stop(keyboard);
 	wlr_seat_set_keyboard(keyboard->server->seat, keyboard->wlr_keyboard);
@@ -472,7 +459,7 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 			if (vt > 0) {
 				if (server->session) {
 					if (wlr_session_change_vt(server->session, vt))
-						wlr_log(WLR_INFO, "Switched to VT %u", vt);
+						wlr_log(WLR_DEBUG, "Switched to VT %u", vt);
 					else
 						wlr_log(WLR_ERROR, "VT switch to %u failed", vt);
 				} else {
@@ -667,7 +654,7 @@ void seat_pointer_focus_change(struct wl_listener *listener, void *data) {
 		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
 	}
 	if (event->new_surface != event->old_surface) {
-		wlr_log(WLR_INFO, "POINTER_FOCUS: old=%p new=%p kb_focus=%p",
+		wlr_log(WLR_DEBUG, "POINTER_FOCUS: old=%p new=%p kb_focus=%p",
 			(void *)event->old_surface, (void *)event->new_surface,
 			(void *)server->seat->keyboard_state.focused_surface);
 	}
@@ -676,7 +663,7 @@ void seat_pointer_focus_change(struct wl_listener *listener, void *data) {
 void seat_request_set_selection(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, request_set_selection);
 	struct wlr_seat_request_set_selection_event *event = data;
-	wlr_log(WLR_INFO, "SEAT_FOCUS: set_selection serial=%u source=%p",
+	wlr_log(WLR_DEBUG, "SEAT_FOCUS: set_selection serial=%u source=%p",
 		event->serial, (void *)event->source);
 	wlr_seat_set_selection(server->seat, event->source, event->serial);
 }
@@ -813,23 +800,22 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		if (kbd)
 			modifiers = wlr_keyboard_get_modifiers(kbd);
 
-		if (modifiers & WLR_MODIFIER_LOGO) {
-			double sx, sy;
-			struct wlr_surface *surface = NULL;
-			struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
-				server->cursor->x, server->cursor->y, &surface, &sx, &sy);
-			if (toplevel) {
-				focus_toplevel(toplevel);
-				if (event->button == BTN_LEFT) {
-					begin_interactive(toplevel, UWM_CURSOR_MOVE, 0);
-					return;
-				} else if (event->button == BTN_RIGHT) {
-					if (!toplevel->floating)
-						toggle_floating(toplevel);
-					begin_interactive(toplevel, UWM_CURSOR_RESIZE,
-						WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM);
-					return;
-				}
+		double sx, sy;
+		struct wlr_surface *surface = NULL;
+		struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
+			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+
+		if ((modifiers & WLR_MODIFIER_LOGO) && toplevel) {
+			focus_toplevel(toplevel);
+			if (event->button == BTN_LEFT) {
+				begin_interactive(toplevel, UWM_CURSOR_MOVE, 0);
+				return;
+			} else if (event->button == BTN_RIGHT) {
+				if (!toplevel->floating)
+					toggle_floating(toplevel);
+				begin_interactive(toplevel, UWM_CURSOR_RESIZE,
+					WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM);
+				return;
 			}
 		}
 
@@ -837,10 +823,6 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			server->seat, event->time_msec, event->button, event->state);
 		wlr_seat_pointer_notify_frame(server->seat);
 
-		double sx, sy;
-		struct wlr_surface *surface = NULL;
-		struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
-			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 		if (toplevel && !toplevel->is_transient)
 			focus_toplevel(toplevel);
 	} else {

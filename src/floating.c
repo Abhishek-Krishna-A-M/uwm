@@ -148,10 +148,9 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 			if (tl != window)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 		}
-		struct uwm_output *iter;
-		wl_list_for_each(iter, &window->server->outputs, link) {
-			wlr_scene_node_set_enabled(&iter->layer_top->node, false);
-			wlr_scene_node_set_enabled(&iter->layer_overlay->node, false);
+		if (output) {
+			wlr_scene_node_set_enabled(&output->layer_top->node, false);
+			wlr_scene_node_set_enabled(&output->layer_overlay->node, false);
 		}
 
 		window->saved_floating = window->floating;
@@ -226,10 +225,9 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
-		struct uwm_output *iter;
-		wl_list_for_each(iter, &window->server->outputs, link) {
-			wlr_scene_node_set_enabled(&iter->layer_top->node, true);
-			wlr_scene_node_set_enabled(&iter->layer_overlay->node, true);
+		if (output) {
+			wlr_scene_node_set_enabled(&output->layer_top->node, true);
+			wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
 		}
 
 		if (window->saved_floating)
