@@ -1,8 +1,8 @@
-CFLAGS ?= -Wall -Wextra -pedantic -std=c11 -O3
+CFLAGS ?= -Wall -Wextra -pedantic -std=c11 -O3 -march=native -DNDEBUG
 CFLAGS += -Wno-unused-parameter
 CFLAGS += -Isrc -Iprotocol
-CFLAGS += $(shell pkg-config --cflags wayland-client cairo pango pangocairo)
-LDLIBS = $(shell pkg-config --libs wayland-client cairo pango pangocairo) -lrt
+CFLAGS += $(shell pkg-config --cflags wayland-client cairo pango pangocairo libpulse libpipewire-0.3 libudev dbus-1)
+LDLIBS = $(shell pkg-config --libs wayland-client cairo pango pangocairo libpulse libpipewire-0.3 libudev dbus-1) -lrt
 
 WAYLAND_SCANNER ?= wayland-scanner
 

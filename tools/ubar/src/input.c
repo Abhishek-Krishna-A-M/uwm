@@ -46,7 +46,9 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 	switch (zone->type) {
 	case ZONE_TIME:
 		state->time_detailed = !state->time_detailed;
+		state->prev_minute = -1;
 		data_update_clock(state);
+		set_clock_timer(state);
 		state->need_redraw = true;
 		break;
 
@@ -60,9 +62,7 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 			execlp("wpctl", "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL);
 			_exit(0);
 		}
-		/* Don't call data_update_volume() here — it uses popen() on the main thread.
-		 * The audio_monitor thread will detect the change via polling. */
-		LOG("volume toggle: forked wpctl, waiting for monitor poll");
+		/* PulseAudio subscription detects the change via audio_pipe */
 		break;
 
 	case ZONE_NETWORK:
@@ -72,9 +72,9 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 
 	case ZONE_WORKSPACE:
 		if (fork() == 0) {
-			char cmd[32];
-			snprintf(cmd, sizeof(cmd), "uwm -t workspace %d", zone->data);
-			execlp("sh", "sh", "-c", cmd, NULL);
+			char id_str[8];
+			snprintf(id_str, sizeof(id_str), "%d", zone->data);
+			execlp("uwm", "uwm", "-t", "workspace", id_str, NULL);
 			_exit(0);
 		}
 		break;
@@ -106,8 +106,7 @@ static void pointer_axis(void *data, struct wl_pointer *wl_pointer,
 			_exit(0);
 		}
 	}
-	/* Don't call data_update_volume() here — let audio_monitor thread handle it. */
-	LOG("volume scroll: forked wpctl, waiting for monitor poll");
+	/* PulseAudio subscription detects the change via audio_pipe */
 }
 
 static void pointer_frame(void *data, struct wl_pointer *wl_pointer) {}

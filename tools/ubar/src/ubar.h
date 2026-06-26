@@ -61,10 +61,13 @@ typedef struct {
 	uint32_t height;
 
 	int timer_fd;
-	int notify_fds[2];
+	int clock_timer_fd;
 	bool running;
 	bool need_redraw;
 	bool configured;
+
+	int slow_timer;
+	int prev_minute;
 
 	struct wl_callback *frame_callback;
 	bool frame_pending;
@@ -108,11 +111,22 @@ typedef struct {
 	int zone_count;
 
 	int pointer_x;
+
+	/* Event-driven monitor pipes (each subsystem writes 1 byte on change) */
+	int audio_pipe[2];
+	int battery_pipe[2];
+	int network_pipe[2];
+	int display_pipe[2];
+
+	/* Partial damage: previous frame item positions */
+	int prev_zones[MAX_ZONES];
+	int prev_zone_count;
 } State;
 
 uint32_t parse_color(const char *hex);
 void cairo_set_source_hex(cairo_t *cr, uint32_t color);
 void destroy_buffer(struct pool_buffer *buf);
+void set_clock_timer(State *s);
 
 extern const struct wl_callback_listener frame_listener;
 

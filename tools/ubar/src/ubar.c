@@ -33,7 +33,35 @@ uint32_t parse_color(const char *hex) {
 	return (0xFF << 24) | (r << 16) | (g << 8) | b;
 }
 
-// ====== Wayland globals binding ======
+/* ====== Pipe helper ====== */
+
+static void create_pipe(int fds[2]) {
+	pipe2(fds, O_CLOEXEC | O_NONBLOCK);
+}
+
+static void drain_pipe(int fd) {
+	char buf[64];
+	while (read(fd, buf, sizeof(buf)) > 0)
+		;
+}
+
+/* ====== Clock timer control ====== */
+
+void set_clock_timer(State *s) {
+	struct itimerspec ts = {0};
+	if (s->time_detailed) {
+		/* Show seconds: 1s interval */
+		ts.it_interval = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
+		ts.it_value    = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
+	} else {
+		/* Show HH:MM only: 60s interval */
+		ts.it_interval = (struct timespec){ .tv_sec = 60, .tv_nsec = 0 };
+		ts.it_value    = (struct timespec){ .tv_sec = 60, .tv_nsec = 0 };
+	}
+	timerfd_settime(s->clock_timer_fd, 0, &ts, NULL);
+}
+
+/* ====== Wayland globals binding ====== */
 
 static void handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
@@ -41,35 +69,26 @@ static void handle_global(void *data, struct wl_registry *registry,
 
 	if (strcmp(interface, wl_compositor_interface.name) == 0) {
 		s->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 5);
-		LOG("bound wl_compositor v5");
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
 		s->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-		LOG("bound wl_shm v1");
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		s->layer_shell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 4);
-		LOG("bound zwlr_layer_shell_v1 v4");
 	} else if (strcmp(interface, zwp_uwm_bar_v1_interface.name) == 0) {
 		s->bar_manager = wl_registry_bind(registry, name, &zwp_uwm_bar_v1_interface, 1);
-		LOG("bound zwp_uwm_bar_v1 v1");
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
 		s->seat = wl_registry_bind(registry, name, &wl_seat_interface, 8);
-		LOG("bound wl_seat v8");
-	} else {
-		LOG("skipped global: %s v%u", interface, version);
 	}
 }
 
 static void handle_global_remove(void *data, struct wl_registry *registry,
-		uint32_t name) {
-	LOG("global removed: name=%u", name);
-}
+		uint32_t name) {}
 
 static const struct wl_registry_listener registry_listener = {
 	.global = handle_global,
 	.global_remove = handle_global_remove,
 };
 
-// ====== Layer surface listener ======
+/* ====== Layer surface listener ====== */
 
 static void layer_surface_configure(void *data,
 		struct zwlr_layer_surface_v1 *surface,
@@ -80,13 +99,11 @@ static void layer_surface_configure(void *data,
 	s->height = height > 0 ? height : BAR_HEIGHT;
 	s->configured = true;
 	s->need_redraw = true;
-	LOG("layer surface configured: %ux%u serial=%u", s->width, s->height, serial);
 }
 
 static void layer_surface_closed(void *data,
 		struct zwlr_layer_surface_v1 *surface) {
 	State *s = (State *)data;
-	LOG("layer surface closed by compositor");
 	s->running = false;
 }
 
@@ -95,15 +112,13 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 	.closed = layer_surface_closed,
 };
 
-// ====== UWM workspace group listener ======
+/* ====== UWM workspace group listener ====== */
 
 static void ws_workspace(void *data,
 		struct zwp_uwm_workspace_group_v1 *group,
 		uint32_t id, uint32_t active, uint32_t occupied) {
 	State *s = (State *)data;
 
-	/* On first event of a new batch, reset all workspace states so stale
-	 * workspaces (that the compositor didn't send an update for) get cleared. */
 	if (s->ws_batch_pending) {
 		for (int i = 0; i < MAX_WORKSPACES; i++) {
 			s->workspaces[i].active = false;
@@ -113,10 +128,14 @@ static void ws_workspace(void *data,
 	}
 
 	if (id >= MAX_WORKSPACES) return;
+	bool new_active = (active != 0);
+	bool new_occupied = (occupied != 0);
+	if (s->workspaces[id].active != new_active ||
+	    s->workspaces[id].occupied != new_occupied)
+		s->need_redraw = true;
 	s->workspaces[id].id = id;
-	s->workspaces[id].active = (active != 0);
-	s->workspaces[id].occupied = (occupied != 0);
-	LOG("workspace %u: active=%u occupied=%u", id, active, occupied);
+	s->workspaces[id].active = new_active;
+	s->workspaces[id].occupied = new_occupied;
 }
 
 static void ws_focused_title(void *data,
@@ -125,23 +144,19 @@ static void ws_focused_title(void *data,
 	State *s = (State *)data;
 	if (strcmp(s->focused_title, title) != 0) {
 		strncpy(s->focused_title, title, sizeof(s->focused_title) - 1);
-		LOG("focused title: \"%s\"", title);
+		s->need_redraw = true;
 	}
 }
 
 static void ws_done(void *data,
 		struct zwp_uwm_workspace_group_v1 *group) {
 	State *s = (State *)data;
-	int old_count = s->ws_count;
 	s->ws_count = 0;
 	for (int i = 0; i < MAX_WORKSPACES; i++) {
 		if (s->workspaces[i].occupied || s->workspaces[i].active)
 			s->ws_count = i + 1;
 	}
-	s->need_redraw = true;
 	s->ws_batch_pending = true;
-	if (old_count != s->ws_count)
-		LOG("ws_count changed: %d -> %d", old_count, s->ws_count);
 }
 
 static const struct zwp_uwm_workspace_group_v1_listener workspace_group_listener = {
@@ -150,7 +165,7 @@ static const struct zwp_uwm_workspace_group_v1_listener workspace_group_listener
 	.done = ws_done,
 };
 
-// ====== Frame callback ======
+/* ====== Frame callback ====== */
 
 void frame_done(void *data, struct wl_callback *cb, uint32_t time) {
 	State *s = (State *)data;
@@ -165,7 +180,17 @@ const struct wl_callback_listener frame_listener = {
 	.done = frame_done,
 };
 
-// ====== Main ======
+/* ====== Main ====== */
+
+/* Poll FD indices */
+#define FD_WL     0
+#define FD_TIMER  1
+#define FD_CLOCK  2
+#define FD_AUDIO  3
+#define FD_BATT   4
+#define FD_NET    5
+#define FD_DISP   6
+#define NFDS      7
 
 int main(int argc, char **argv) {
 	strncpy(state.font, "JetBrainsMono Nerd Font 10", sizeof(state.font) - 1);
@@ -193,44 +218,31 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	LOG("connecting to Wayland display...");
+	/* Connect to Wayland */
 	state.display = wl_display_connect(NULL);
-	if (!state.display) {
-		LOG("FAILED to connect: %s", strerror(errno));
-		return 1;
-	}
-	LOG("connected");
+	if (!state.display) return 1;
 
 	struct wl_registry *registry = wl_display_get_registry(state.display);
 	wl_registry_add_listener(registry, &registry_listener, &state);
 
-	int rt = wl_display_roundtrip(state.display);
-	LOG("roundtrip returned %d", rt);
-
-	if (rt < 0) {
-		LOG("roundtrip failed");
+	if (wl_display_roundtrip(state.display) < 0) {
 		wl_display_disconnect(state.display);
 		return 1;
 	}
 
 	if (!state.compositor || !state.shm || !state.layer_shell) {
-		LOG("missing globals: compositor=%p shm=%p layer_shell=%p",
-			(void*)state.compositor, (void*)state.shm, (void*)state.layer_shell);
 		wl_display_disconnect(state.display);
 		return 1;
 	}
 
-	if (state.seat) {
+	if (state.seat)
 		input_init(&state, state.seat);
-		LOG("seat initialized");
-	}
 
-	// Create layer surface
+	/* Create layer surface */
 	state.surface = wl_compositor_create_surface(state.compositor);
 	state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 		state.layer_shell, state.surface, NULL,
 		ZWLR_LAYER_SHELL_V1_LAYER_TOP, "ubar");
-	LOG("layer surface created");
 
 	zwlr_layer_surface_v1_add_listener(state.layer_surface,
 		&layer_surface_listener, &state);
@@ -246,24 +258,19 @@ int main(int argc, char **argv) {
 
 	wl_surface_commit(state.surface);
 
-	for (int i = 0; i < 3 && !state.configured; i++) {
+	for (int i = 0; i < 3 && !state.configured; i++)
 		wl_display_roundtrip(state.display);
-	}
-	LOG("configured=%d width=%d height=%u", state.configured, state.width, state.height);
 
-	// Bind UWM protocol
+	/* Bind UWM protocol */
 	if (state.bar_manager) {
 		state.workspace_group = zwp_uwm_bar_v1_get_workspace_group(
 			state.bar_manager, NULL);
 		zwp_uwm_workspace_group_v1_add_listener(state.workspace_group,
 			&workspace_group_listener, &state);
 		wl_display_roundtrip(state.display);
-		LOG("UWM bar protocol bound");
-	} else {
-		LOG("no UWM bar manager — workspace info unavailable");
 	}
 
-	// Buffers
+	/* Buffers */
 	for (int i = 0; i < 3; i++) {
 		state.bufs[i].buffer = NULL;
 		state.bufs[i].busy = false;
@@ -271,41 +278,46 @@ int main(int argc, char **argv) {
 	state.frame_callback = NULL;
 	state.frame_pending = false;
 
-	// Timer
+	/* Slow data timer — always 1s (CPU/temp/RAM counter) */
 	state.timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 	struct itimerspec ts = {
 		.it_interval = { .tv_sec = 1, .tv_nsec = 0 },
 		.it_value = { .tv_sec = 1, .tv_nsec = 0 },
 	};
 	timerfd_settime(state.timer_fd, 0, &ts, NULL);
-	LOG("timer created (1s interval)");
+	state.slow_timer = 0;
+	state.prev_minute = -1;
 
-	// Notify pipe
-	pipe2(state.notify_fds, O_CLOEXEC | O_NONBLOCK);
-	LOG("notify pipe created (fd=%d,%d)", state.notify_fds[0], state.notify_fds[1]);
+	/* Clock timer — 1s when showing seconds, 60s when showing HH:MM */
+	state.clock_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+	set_clock_timer(&state);
 
-	// Init fast data
+	/* Create per-subsystem notification pipes */
+	create_pipe(state.audio_pipe);
+	create_pipe(state.battery_pipe);
+	create_pipe(state.network_pipe);
+	create_pipe(state.display_pipe);
+
+	/* Init fast data (synchronous) */
 	data_init_fast(&state);
-	LOG("fast data loaded: cpu=%d%% ram=%d%% bat=%d%% temp=%dC time=%s",
-		state.cpu_pct, state.ram_pct, state.bat_pct, state.temp_c, state.time_str);
 
-	// Start monitors
+	/* Start event-driven monitors */
 	data_start_monitors(&state);
-	LOG("background monitors started");
 
-	// Signals
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
 
-	// Main loop
+	/* Main event loop */
 	int wl_fd = wl_display_get_fd(state.display);
-	struct pollfd fds[3] = {
-		{ .fd = wl_fd,          .events = POLLIN },
-		{ .fd = state.timer_fd, .events = POLLIN },
-		{ .fd = state.notify_fds[0], .events = POLLIN },
+	struct pollfd fds[NFDS] = {
+		[FD_WL]    = { .fd = wl_fd,                  .events = POLLIN },
+		[FD_TIMER] = { .fd = state.timer_fd,          .events = POLLIN },
+		[FD_CLOCK] = { .fd = state.clock_timer_fd,    .events = POLLIN },
+		[FD_AUDIO] = { .fd = state.audio_pipe[0],     .events = POLLIN },
+		[FD_BATT]  = { .fd = state.battery_pipe[0],   .events = POLLIN },
+		[FD_NET]   = { .fd = state.network_pipe[0],   .events = POLLIN },
+		[FD_DISP]  = { .fd = state.display_pipe[0],   .events = POLLIN },
 	};
-
-	LOG("entering main loop (wl_fd=%d)", wl_fd);
 
 	while (state.running) {
 		if (state.need_redraw && state.configured) {
@@ -313,65 +325,89 @@ int main(int argc, char **argv) {
 			state.need_redraw = false;
 		}
 
-		/* Flush pending Wayland events before polling */
 		if (wl_display_flush(state.display) < 0) {
 			if (errno == EAGAIN) {
-				fds[0].events = POLLIN | POLLOUT;
-				poll(fds, 1, 100);
-				fds[0].events = POLLIN;
+				fds[FD_WL].events = POLLIN | POLLOUT;
+				poll(&fds[FD_WL], 1, 100);
+				fds[FD_WL].events = POLLIN;
 				continue;
 			}
-			LOG("wl_display_flush failed: %s", strerror(errno));
 			break;
 		}
 
-		/* Prepare to read Wayland events (may need to dispatch pending first) */
 		while (wl_display_prepare_read(state.display) != 0)
 			wl_display_dispatch_pending(state.display);
 
-		int ret = poll(fds, 3, -1);
+		int ret = poll(fds, NFDS, -1);
 		if (ret < 0) {
 			wl_display_cancel_read(state.display);
 			if (errno == EINTR) continue;
-			LOG("poll failed: %s", strerror(errno));
 			break;
 		}
 
-		/* Only read Wayland events if the Wayland fd actually has data */
-		if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+		/* Wayland events */
+		if (fds[FD_WL].revents & (POLLIN | POLLHUP | POLLERR)) {
 			wl_display_read_events(state.display);
 			wl_display_dispatch_pending(state.display);
 		} else {
 			wl_display_cancel_read(state.display);
 		}
 
-		if (fds[0].revents & (POLLERR | POLLHUP)) {
-			LOG("Wayland fd error revents=0x%x", fds[0].revents);
+		if (fds[FD_WL].revents & (POLLERR | POLLHUP))
 			break;
-		}
 
-		if (fds[1].revents & POLLIN) {
+		/* Slow data timer tick (1s) — CPU/temp/RAM counter */
+		if (fds[FD_TIMER].revents & POLLIN) {
 			uint64_t exp;
 			read(state.timer_fd, &exp, sizeof(exp));
-			data_update_all_timer(&state);
+			state.slow_timer++;
+			if (state.slow_timer >= 2) {
+				state.slow_timer = 0;
+				if (data_update_slow_timer(&state))
+					state.need_redraw = true;
+			}
+		}
+
+		/* Clock timer tick (1s or 60s depending on mode) */
+		if (fds[FD_CLOCK].revents & POLLIN) {
+			uint64_t exp;
+			read(state.clock_timer_fd, &exp, sizeof(exp));
+			if (data_update_all_timer(&state))
+				state.need_redraw = true;
+		}
+
+		/* Audio volume changed (PipeWire/PulseAudio event) */
+		if (fds[FD_AUDIO].revents & POLLIN) {
+			drain_pipe(state.audio_pipe[0]);
+			data_sync_to_state(&state);
 			state.need_redraw = true;
 		}
 
-		if (fds[2].revents & POLLIN) {
-			char buf[64];
-			ssize_t n = read(state.notify_fds[0], buf, sizeof(buf));
-			if (n > 0) {
-				data_sync_to_state(&state);
-				LOG("pipe notify: %.*s (vol=%d muted=%d net=%s)",
-					(int)n, buf, state.vol_pct, state.muted, state.net_name);
-			}
+		/* Battery changed (D-Bus UPower event) */
+		if (fds[FD_BATT].revents & POLLIN) {
+			drain_pipe(state.battery_pipe[0]);
+			data_sync_to_state(&state);
+			state.need_redraw = true;
+		}
+
+		/* Network changed (netlink event) */
+		if (fds[FD_NET].revents & POLLIN) {
+			drain_pipe(state.network_pipe[0]);
+			data_sync_to_state(&state);
+			state.need_redraw = true;
+		}
+
+		/* Display/HDMI/LEDs changed (udev event) */
+		if (fds[FD_DISP].revents & POLLIN) {
+			drain_pipe(state.display_pipe[0]);
+			data_sync_to_state(&state);
 			state.need_redraw = true;
 		}
 	}
 
-	LOG("exiting main loop");
+	/* Shutdown */
+	data_stop_monitors(&state);
 
-	// Cleanup
 	if (state.workspace_group)
 		zwp_uwm_workspace_group_v1_destroy(state.workspace_group);
 	if (state.bar_manager)
@@ -399,20 +435,18 @@ int main(int argc, char **argv) {
 		destroy_buffer(&state.bufs[i]);
 
 	close(state.timer_fd);
-	close(state.notify_fds[0]);
-	close(state.notify_fds[1]);
+	close(state.clock_timer_fd);
+	close(state.audio_pipe[0]); close(state.audio_pipe[1]);
+	close(state.battery_pipe[0]); close(state.battery_pipe[1]);
+	close(state.network_pipe[0]); close(state.network_pipe[1]);
+	close(state.display_pipe[0]); close(state.display_pipe[1]);
 
 	wl_display_disconnect(state.display);
 
 	if (state.running) {
-		/* Unexpected disconnect (e.g. compositor crash recovery during VT
-		 * switch). Re-exec ourselves to reconnect. */
-		LOG("unexpected disconnect, reconnecting...");
 		execvp(argv[0], argv);
-		LOG("exec failed: %s", strerror(errno));
 		return 1;
 	}
 
-	LOG("clean exit");
 	return 0;
 }

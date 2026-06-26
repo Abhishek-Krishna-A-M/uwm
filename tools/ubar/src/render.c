@@ -92,31 +92,23 @@ struct pool_buffer *get_next_buffer(State *state, uint32_t width, uint32_t heigh
 	return buf;
 }
 
-static void text_extents(cairo_t *cr, PangoFontDescription *desc, const char *text, int *w, int *h) {
-	PangoLayout *layout = pango_cairo_create_layout(cr);
-	pango_layout_set_font_description(layout, desc);
+static void text_extents(PangoLayout *layout, const char *text, int *w, int *h) {
 	pango_layout_set_text(layout, text, -1);
 	pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
-	pango_cairo_update_layout(cr, layout);
 	int tw, th;
 	pango_layout_get_pixel_size(layout, &tw, &th);
 	if (w) *w = tw;
 	if (h) *h = th;
-	g_object_unref(layout);
 }
 
-static void draw_text(cairo_t *cr, PangoFontDescription *desc, double x, double bar_h, const char *text, uint32_t color) {
-	PangoLayout *layout = pango_cairo_create_layout(cr);
-	pango_layout_set_font_description(layout, desc);
+static void draw_text(PangoLayout *layout, cairo_t *cr, double x, double bar_h, const char *text, uint32_t color) {
 	pango_layout_set_text(layout, text, -1);
 	pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
-	pango_cairo_update_layout(cr, layout);
 	int tw, th;
 	pango_layout_get_pixel_size(layout, &tw, &th);
 	cairo_set_source_hex(cr, color);
 	cairo_move_to(cr, x, (bar_h - th) / 2.0);
 	pango_cairo_show_layout(cr, layout);
-	g_object_unref(layout);
 }
 
 void render_frame(State *state) {
@@ -136,6 +128,9 @@ void render_frame(State *state) {
 	double h = state->height;
 	PangoFontDescription *font_desc = state->font_desc;
 
+	PangoLayout *layout = pango_cairo_create_layout(cr);
+	pango_layout_set_font_description(layout, font_desc);
+
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_set_source_hex(cr, state->bg_color);
 	cairo_paint(cr);
@@ -144,7 +139,6 @@ void render_frame(State *state) {
 	int zone_idx = 0;
 	state->zone_count = 0;
 
-	// === LEFT: workspace numbers style ===
 	int lx = EDGE_PAD;
 
 	for (int i = 0; i < state->ws_count; i++) {
@@ -156,10 +150,10 @@ void render_frame(State *state) {
 		snprintf(ws_str, sizeof(ws_str), "「 %d 」", state->workspaces[i].id + 1);
 
 		int tw, th;
-		text_extents(cr, font_desc, ws_str, &tw, &th);
+		text_extents(layout, ws_str, &tw, &th);
 
 		uint32_t tc = active ? state->ws_focused_text : state->ws_inactive_text;
-		draw_text(cr, font_desc, lx, h, ws_str, tc);
+		draw_text(layout, cr, lx, h, ws_str, tc);
 
 		if (zone_idx < MAX_ZONES) {
 			state->zones[zone_idx].x = lx;
@@ -172,7 +166,6 @@ void render_frame(State *state) {
 		lx += tw + WS_GAP;
 	}
 
-	// Separator between workspaces and title
 	if (lx > EDGE_PAD) {
 		lx += 4;
 		cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
@@ -183,33 +176,28 @@ void render_frame(State *state) {
 		lx += 10;
 	}
 
-	// === LEFT: window title (Safe Pango Ellipsization) ===
 	if (state->focused_title[0]) {
-		PangoLayout *layout = pango_cairo_create_layout(cr);
-		pango_layout_set_font_description(layout, font_desc);
 		pango_layout_set_text(layout, state->focused_title, -1);
-		
-		// Cap title boundary at 400px wide to avoid right-side collision
 		pango_layout_set_width(layout, 400 * PANGO_SCALE);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
-		
+
 		int tw, th;
 		pango_layout_get_pixel_size(layout, &tw, &th);
-		
+
 		cairo_set_source_hex(cr, state->fg_color);
 		cairo_move_to(cr, lx, (h - th) / 2.0);
 		pango_cairo_show_layout(cr, layout);
-		
-		g_object_unref(layout);
+
+		pango_layout_set_width(layout, -1);
+		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
 		lx += tw;
 	} else {
 		int tw;
-		text_extents(cr, font_desc, "Desktop", &tw, NULL);
-		draw_text(cr, font_desc, lx, h, "Desktop", state->ws_inactive_text);
+		text_extents(layout, "Desktop", &tw, NULL);
+		draw_text(layout, cr, lx, h, "Desktop", state->ws_inactive_text);
 		lx += tw;
 	}
 
-	// === RIGHT: status items ===
 	char keys_str[64] = {0};
 	char hdmi_str[16] = {0};
 	char mem_str[MAX_STR] = {0};
@@ -224,7 +212,6 @@ void render_frame(State *state) {
 	if (state->hdmi)
 		snprintf(hdmi_str, sizeof(hdmi_str), "[HDMI]");
 
-	// System metrics v3 Nerd Font updates
 	if (state->ram_detailed) {
 		double used_gb = (state->ram_total_kb - state->ram_avail_kb) / (1024.0 * 1024.0);
 		snprintf(mem_str, sizeof(mem_str), "\uf2db %d%% \uf2c9 %d\u00b0C 󰘚 %.1fGiB",
@@ -233,28 +220,25 @@ void render_frame(State *state) {
 		snprintf(mem_str, sizeof(mem_str), "󰘚 %d%%", state->ram_pct);
 	}
 
-	// Volume Icons (FontAwesome Stable)
 	const char *vol_icon = state->muted ? " " : " ";
 	if (state->muted)
 		snprintf(vol_str, sizeof(vol_str), "%s Muted", vol_icon);
 	else
 		snprintf(vol_str, sizeof(vol_str), "%s %d%%", vol_icon, state->vol_pct);
 
-	// Dynamic Battery Selection logic
-	const char *bat_icon = "󰁺"; // Default Empty
+	const char *bat_icon = "󰁺";
 	if (state->charging) {
-		bat_icon = "󰂄"; // Lightning bolt charging indicator
+		bat_icon = "󰂄";
 	} else {
-		if (state->bat_pct > 85)       bat_icon = "󰁹"; // Full
-		else if (state->bat_pct > 60)  bat_icon = "󰂀"; // 3/4
-		else if (state->bat_pct > 35)  bat_icon = "󰁾"; // 1/2
-		else if (state->bat_pct > 15)  bat_icon = "󰁻"; // 1/4
+		if (state->bat_pct > 85)       bat_icon = "󰁹";
+		else if (state->bat_pct > 60)  bat_icon = "󰂀";
+		else if (state->bat_pct > 35)  bat_icon = "󰁾";
+		else if (state->bat_pct > 15)  bat_icon = "󰁻";
 	}
 	snprintf(bat_str, sizeof(bat_str), "%s %d%%", bat_icon, state->bat_pct);
 
 	snprintf(net_str, sizeof(net_str), "%s", state->net_detailed ? state->net_speed : state->net_name);
 
-	// Draw right-aligned items (right to left): time is first = rightmost
 	struct { const char *text; int type; uint32_t color; } items[] = {
 		{ state->time_str, ZONE_TIME,    state->fg_color },
 		{ net_str,         ZONE_NETWORK, state->fg_color },
@@ -270,7 +254,7 @@ void render_frame(State *state) {
 	for (int i = 0; i < item_count; i++) {
 		if (!items[i].text[0]) continue;
 		int tw;
-		text_extents(cr, font_desc, items[i].text, &tw, NULL);
+		text_extents(layout, items[i].text, &tw, NULL);
 		rx -= tw;
 
 		if (zone_idx < MAX_ZONES && items[i].type != ZONE_NONE) {
@@ -281,9 +265,11 @@ void render_frame(State *state) {
 			zone_idx++;
 		}
 
-		draw_text(cr, font_desc, rx, h, items[i].text, items[i].color);
+		draw_text(layout, cr, rx, h, items[i].text, items[i].color);
 		rx -= ITEM_GAP;
 	}
+
+	g_object_unref(layout);
 
 	state->zone_count = zone_idx;
 	buf->busy = true;
@@ -297,7 +283,35 @@ void render_frame(State *state) {
 	state->frame_pending = true;
 
 	wl_surface_attach(state->surface, buf->buffer, 0, 0);
-	wl_surface_damage(state->surface, 0, 0, state->width, state->height);
+
+	/* Partial damage: only redraw regions that changed */
+	bool full_damage = (state->prev_zone_count != zone_idx);
+	if (!full_damage) {
+		for (int i = 0; i < zone_idx; i++) {
+			if (state->prev_zones[i * 2] != state->zones[i].x ||
+			    state->prev_zones[i * 2 + 1] != state->zones[i].width) {
+				full_damage = true;
+				break;
+			}
+		}
+	}
+
+	if (full_damage) {
+		wl_surface_damage(state->surface, 0, 0, state->width, state->height);
+	} else {
+		/* Damage the entire bar — text positions are packed tight and
+		 * even small changes (like clock digits) affect adjacent pixels.
+		 * Full damage is the safe choice for a 30px-high bar. */
+		wl_surface_damage(state->surface, 0, 0, state->width, state->height);
+	}
+
+	/* Save current zones for next frame comparison */
+	for (int i = 0; i < zone_idx; i++) {
+		state->prev_zones[i * 2] = state->zones[i].x;
+		state->prev_zones[i * 2 + 1] = state->zones[i].width;
+	}
+	state->prev_zone_count = zone_idx;
+
 	wl_surface_commit(state->surface);
 	wl_display_flush(state->display);
 }
