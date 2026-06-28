@@ -116,7 +116,6 @@ typedef struct {
 
 	/* Event-driven monitor pipes (each subsystem writes 1 byte on change) */
 	int audio_pipe[2];
-	int battery_pipe[2];
 	int network_pipe[2];
 	int display_pipe[2];
 	int uinput_fd;

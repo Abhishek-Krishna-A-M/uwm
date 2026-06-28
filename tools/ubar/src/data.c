@@ -17,8 +17,7 @@
 /* PulseAudio (PipeWire-compatible) for volume monitoring */
 #include <pulse/pulseaudio.h>
 
-/* D-Bus for UPower battery monitoring */
-#include <dbus/dbus.h>
+
 
 /* Netlink for network event monitoring */
 #include <linux/netlink.h>
@@ -394,52 +393,6 @@ static void *audio_monitor_thread(void *arg) {
  * D-BUS / UPOWER BATTERY MONITOR (event-driven)
  * ================================================================ */
 
-static void *battery_monitor_thread(void *arg) {
-	State *state = arg;
-	DBusError err;
-	dbus_error_init(&err);
-
-	DBusConnection *conn = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
-	if (!conn) {
-		LOG("dbus_bus_get_private failed: %s", err.message);
-		dbus_error_free(&err);
-		return NULL;
-	}
-
-	dbus_connection_set_exit_on_disconnect(conn, FALSE);
-
-	/* Listen for UPower PropertiesChanged on battery devices */
-	dbus_bus_add_match(conn,
-		"type='signal',interface='org.freedesktop.DBus.Properties',"
-		"member='PropertiesChanged',path_namespace='/org/freedesktop/UPower/devices'",
-		&err);
-	if (dbus_error_is_set(&err)) {
-		LOG("dbus add_match failed: %s", err.message);
-		dbus_error_free(&err);
-	}
-
-	while (g_monitors_running) {
-		dbus_connection_read_write(conn, 500); /* 500ms timeout */
-
-		DBusMessage *msg;
-		while ((msg = dbus_connection_pop_message(conn)) != NULL) {
-			if (dbus_message_is_signal(msg,
-					"org.freedesktop.DBus.Properties",
-					"PropertiesChanged")) {
-				/* UPower battery changed — re-read from sysfs for simplicity */
-				if (g_monitors_running) {
-					write(state->battery_pipe[1], &((char){NOTIFY_BATTERY}), 1);
-				}
-			}
-			dbus_message_unref(msg);
-		}
-	}
-
-	dbus_connection_close(conn);
-	dbus_connection_unref(conn);
-	return NULL;
-}
-
 /* ================================================================
  * NETLINK NETWORK MONITOR (event-driven, no polling)
  * ================================================================ */
@@ -553,15 +506,13 @@ void data_init_fast(State *state) {
 void data_start_monitors(State *state) {
 	g_monitors_running = true;
 
-	pthread_t t1, t2, t3, t4;
+	pthread_t t1, t2, t3;
 	pthread_create(&t1, NULL, audio_monitor_thread, state);
 	pthread_detach(t1);
-	pthread_create(&t2, NULL, battery_monitor_thread, state);
+	pthread_create(&t2, NULL, network_monitor_thread, state);
 	pthread_detach(t2);
-	pthread_create(&t3, NULL, network_monitor_thread, state);
+	pthread_create(&t3, NULL, display_monitor_thread, state);
 	pthread_detach(t3);
-	pthread_create(&t4, NULL, display_monitor_thread, state);
-	pthread_detach(t4);
 }
 
 void data_stop_monitors(State *state) {
@@ -584,6 +535,7 @@ bool data_update_slow_timer(State *state) {
 	changed |= data_update_cpu(state);
 	changed |= data_update_temp(state);
 	changed |= data_update_memory(state);
+	changed |= data_update_battery_hardware(state);
 	changed |= data_update_locks_hardware(state);
 	return changed;
 }

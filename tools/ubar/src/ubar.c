@@ -54,9 +54,14 @@ void set_clock_timer(State *s) {
 		ts.it_interval = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
 		ts.it_value    = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
 	} else {
-		/* Show HH:MM only: 60s interval */
+		/* Show HH:MM only: 60s interval, aligned to minute boundary */
+		time_t now = time(NULL);
+		struct tm tm;
+		localtime_r(&now, &tm);
+		int sec_until_next = 60 - tm.tm_sec;
+		if (sec_until_next == 0) sec_until_next = 60;
 		ts.it_interval = (struct timespec){ .tv_sec = 60, .tv_nsec = 0 };
-		ts.it_value    = (struct timespec){ .tv_sec = 60, .tv_nsec = 0 };
+		ts.it_value    = (struct timespec){ .tv_sec = sec_until_next, .tv_nsec = 0 };
 	}
 	timerfd_settime(s->clock_timer_fd, 0, &ts, NULL);
 }
@@ -187,10 +192,9 @@ const struct wl_callback_listener frame_listener = {
 #define FD_TIMER  1
 #define FD_CLOCK  2
 #define FD_AUDIO  3
-#define FD_BATT   4
-#define FD_NET    5
-#define FD_DISP   6
-#define NFDS      7
+#define FD_NET    4
+#define FD_DISP   5
+#define NFDS      6
 
 int main(int argc, char **argv) {
 	strncpy(state.font, "JetBrainsMono Nerd Font 10", sizeof(state.font) - 1);
@@ -294,7 +298,6 @@ int main(int argc, char **argv) {
 
 	/* Create per-subsystem notification pipes */
 	create_pipe(state.audio_pipe);
-	create_pipe(state.battery_pipe);
 	create_pipe(state.network_pipe);
 	create_pipe(state.display_pipe);
 
@@ -314,7 +317,6 @@ int main(int argc, char **argv) {
 		[FD_TIMER] = { .fd = state.timer_fd,          .events = POLLIN },
 		[FD_CLOCK] = { .fd = state.clock_timer_fd,    .events = POLLIN },
 		[FD_AUDIO] = { .fd = state.audio_pipe[0],     .events = POLLIN },
-		[FD_BATT]  = { .fd = state.battery_pipe[0],   .events = POLLIN },
 		[FD_NET]   = { .fd = state.network_pipe[0],   .events = POLLIN },
 		[FD_DISP]  = { .fd = state.display_pipe[0],   .events = POLLIN },
 	};
@@ -383,13 +385,6 @@ int main(int argc, char **argv) {
 			state.need_redraw = true;
 		}
 
-		/* Battery changed (D-Bus UPower event) */
-		if (fds[FD_BATT].revents & POLLIN) {
-			drain_pipe(state.battery_pipe[0]);
-			data_sync_to_state(&state);
-			state.need_redraw = true;
-		}
-
 		/* Network changed (netlink event) */
 		if (fds[FD_NET].revents & POLLIN) {
 			drain_pipe(state.network_pipe[0]);
@@ -439,7 +434,6 @@ int main(int argc, char **argv) {
 	close(state.timer_fd);
 	close(state.clock_timer_fd);
 	close(state.audio_pipe[0]); close(state.audio_pipe[1]);
-	close(state.battery_pipe[0]); close(state.battery_pipe[1]);
 	close(state.network_pipe[0]); close(state.network_pipe[1]);
 	close(state.display_pipe[0]); close(state.display_pipe[1]);
 
