@@ -8,6 +8,7 @@
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
@@ -78,6 +79,9 @@ struct uwm_server {
 	struct wl_listener cursor_pinch_end;
 	struct wl_listener cursor_hold_begin;
 	struct wl_listener cursor_hold_end;
+
+	struct wlr_cursor_shape_manager_v1 *cursor_shape_manager;
+	struct wl_listener cursor_shape_request;
 
 	struct wlr_seat *seat;
 	struct wlr_pointer_gestures_v1 *pointer_gestures;

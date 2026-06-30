@@ -172,6 +172,26 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 	wlr_output_configuration_v1_send_succeeded(config);
 }
 
+static void handle_cursor_shape_request(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, cursor_shape_request);
+	struct wlr_cursor_shape_manager_v1_request_set_shape_event *event = data;
+
+	if (event->device_type != WLR_CURSOR_SHAPE_MANAGER_V1_DEVICE_TYPE_POINTER) {
+		return;
+	}
+
+	struct wlr_seat_client *focused_client =
+		server->seat->pointer_state.focused_client;
+	if (focused_client != event->seat_client) {
+		return;
+	}
+
+	const char *name = wlr_cursor_shape_v1_name(event->shape);
+	if (name) {
+		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, name);
+	}
+}
+
 static void handle_output_manager_test(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, output_manager_test);
 	struct wlr_output_configuration_v1 *config = data;
@@ -498,6 +518,18 @@ bool server_init(struct uwm_server *server) {
 	/* Create pointer gestures protocol for touchpad pinch/ swipe/hold support */
 	server->pointer_gestures = wlr_pointer_gestures_v1_create(server->wl_display);
 
+	/* Create cursor-shape-v1 manager for server-side cursor shapes.
+	 * This allows clients (e.g. foot, fuzzel) to set cursor images
+	 * via the cursor-shape-v1 protocol instead of uploading a surface.
+	 * Version 2 adds DND_ASK and ALL_RESIZE shapes. */
+	server->cursor_shape_manager = wlr_cursor_shape_manager_v1_create(
+		server->wl_display, 2);
+	if (server->cursor_shape_manager) {
+		server->cursor_shape_request.notify = handle_cursor_shape_request;
+		wl_signal_add(&server->cursor_shape_manager->events.request_set_shape,
+			&server->cursor_shape_request);
+	}
+
 	bsp_pool_init(&server->bsp_pool);
 	workspace_manager_init(&server->workspaces);
 
@@ -668,6 +700,10 @@ void server_finish(struct uwm_server *server) {
 	wl_list_remove(&server->cursor_pinch_end.link);
 	wl_list_remove(&server->cursor_hold_begin.link);
 	wl_list_remove(&server->cursor_hold_end.link);
+
+	if (server->cursor_shape_manager) {
+		wl_list_remove(&server->cursor_shape_request.link);
+	}
 
 	wl_list_remove(&server->new_input.link);
 	wl_list_remove(&server->request_cursor.link);
