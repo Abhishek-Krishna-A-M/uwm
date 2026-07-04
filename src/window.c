@@ -142,6 +142,16 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 				 server->cursor->y < wy || server->cursor->y >= wy + wh)) {
 			wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
 		}
+
+		/* Update pointer focus after cursor warp so scroll events
+		 * go to the newly focused window without requiring mouse motion. */
+		double sx, sy;
+		struct wlr_surface *surface = NULL;
+		desktop_toplevel_at(server, server->cursor->x, server->cursor->y,
+			&surface, &sx, &sy);
+		if (surface) {
+			wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+		}
 	}
 
 	/* Notify bar clients about title change.
@@ -304,17 +314,17 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		bsp_insert(toplevel->workspace, toplevel);
 	}
 
+	if (!toplevel->workspace->fullscreen_window
+			|| toplevel->workspace->fullscreen_window == toplevel) {
+		focus_toplevel(toplevel);
+	}
+
 	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
 			|| (toplevel->workspace->fullscreen_window
 				&& toplevel->workspace->fullscreen_window != toplevel)) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-	}
-
-	if (!toplevel->workspace->fullscreen_window
-			|| toplevel->workspace->fullscreen_window == toplevel) {
-		focus_toplevel(toplevel);
 	}
 	return;
 

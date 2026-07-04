@@ -140,7 +140,9 @@ static void bsp_arrange_node_full(
 	if (node->first == NULL) {
 		if (node->toplevel && !node->toplevel->floating
 			&& !node->toplevel->fullscreen) {
-			bsp_node_apply_geometry(node);
+			if (!node->toplevel->workspace->monocle
+					|| node->toplevel != node->toplevel->workspace->focused)
+				bsp_node_apply_geometry(node);
 		}
 		return;
 	}
@@ -163,7 +165,9 @@ static void bsp_arrange_node(
 	if (node->first == NULL) {
 		if (node->toplevel && !node->toplevel->floating
 			&& !node->toplevel->fullscreen) {
-			bsp_node_apply_geometry(node);
+			if (!node->toplevel->workspace->monocle
+					|| node->toplevel != node->toplevel->workspace->focused)
+				bsp_node_apply_geometry(node);
 		}
 		return;
 	}
@@ -329,6 +333,13 @@ void bsp_restore(struct uwm_workspace *workspace, struct uwm_toplevel *toplevel)
 	}
 
 	for (int i = 0; i < toplevel->bsp_saved_depth && sibling->parent; i++)
+		sibling = sibling->parent;
+
+	/* If the parent split matches the saved split, the sibling was
+	 * re-split in the same orientation after the window was floated.
+	 * Go up one more level to avoid nesting inside the new split. */
+	if (sibling->parent
+			&& sibling->parent->split == toplevel->bsp_saved_split)
 		sibling = sibling->parent;
 
 	struct uwm_bsp_node *new_leaf = bsp_node_create(toplevel);

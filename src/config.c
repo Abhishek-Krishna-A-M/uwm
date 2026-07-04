@@ -28,6 +28,8 @@ const char *volmute[] = { VOLMUTE };
 const char *brup[] = { BRUP };
 const char *brdown[] = { BRDOWN };
 const char *refresh_bar[] = { REFRESH_BAR };
+const char *ubrowser[] = { UBROWSER };
+const char *run_actions[] = { RUN_ACTIONS };
 
 /* key binding arrays */
 const struct key keys[] = { KEYS };
@@ -64,6 +66,7 @@ void config_load(struct uwm_config *config)
 		.tap_to_click = TAP_TO_CLICK,
 		.natural_scroll = NATURAL_SCROLL,
 		.accel_profile = ACCEL_PROFILE,
+		.pointer_speed = POINTER_SPEED,
 		.inner_gap = INNER_GAP,
 		.rule_count = 0,
 	};

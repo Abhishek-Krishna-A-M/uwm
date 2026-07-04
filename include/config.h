@@ -43,6 +43,7 @@ struct uwm_config {
 	bool tap_to_click;
 	bool natural_scroll;
 	int accel_profile;
+	float pointer_speed;
 	int inner_gap;
 	int rule_count;
 	struct uwm_rule rules[UWM_MAX_RULES];
@@ -81,6 +82,8 @@ extern const char *voldown[];
 extern const char *volmute[];
 extern const char *brup[];
 extern const char *brdown[];
+extern const char *ubrowser[];
+extern const char *run_actions[];
 
 /* action functions — defined in input.c, referenced from config.def.h keys[] */
 void spawn(const union arg *arg);

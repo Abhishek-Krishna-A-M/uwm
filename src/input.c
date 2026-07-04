@@ -610,6 +610,8 @@ static void server_new_pointer(struct uwm_server *server, struct wlr_input_devic
 					: LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
 				libinput_device_config_accel_set_profile(
 					libinput_dev, profile);
+				libinput_device_config_accel_set_speed(
+					libinput_dev, server->config.pointer_speed);
 			}
 		}
 	}

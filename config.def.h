@@ -25,18 +25,19 @@
 #define TAP_TO_CLICK true
 #define NATURAL_SCROLL true
 #define ACCEL_PROFILE 0.75
+#define POINTER_SPEED 0.2
 
 #define MOD WLR_MODIFIER_LOGO
 
 /* spawnable command argv arrays (NULL-terminated) */
 #define TERM        "footclient", NULL
 #define LAUNCHER    "fuzzel", "--no-icons", "--prompt=󰀻 Apps: ", NULL
-#define RUN         "sh", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
+#define RUN         "bash", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy", NULL
 #define FILEMGR     "foot", "-e", "lf", NULL
-#define FINDFILE    "sh", "-c", "file=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt='󰈞 Find File: '); [ -n \"$file\" ] || exit 0; file=\"$HOME/$file\"; foot -e sh -c \"cd \\\"$(dirname \\\"$(realpath \\\"$file\\\")\\\")\\\" && nvim \\\"$(realpath \\\"$file\\\")\\\" && exec $SHELL\"", NULL
+#define FINDFILE    "sh", "-c", "f=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt='󰈞 Find File: ') && [ -n \"$f\" ] && foot -e bash -c \"cd \\\"$HOME/$f\\\" && nvim \\\"$HOME/$f\\\"\"", NULL
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
 #define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL
@@ -46,6 +47,8 @@
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
 #define REFRESH_BAR "sh", "-c", "killall -9 ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
+#define UBROWSER    "ubrowser", NULL
+#define RUN_ACTIONS "sh", "-c", "~/.config/custom_scripts/run_actions.sh", NULL
 
 /* key binding list helper */
 #define KEY(m, s, f, a) { m, s, f, a },
@@ -133,6 +136,8 @@
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_x, spawn, { .argv = powermenu }) \
 	KEY(MOD | WLR_MODIFIER_SHIFT, XKB_KEY_s, spawn, { .argv = screenshot_clip }) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_r, spawn, { .argv = refresh_bar }) \
+	KEY(MOD | WLR_MODIFIER_SHIFT, XKB_KEY_b, spawn, { .argv = ubrowser }) \
+	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_b, spawn, { .argv = run_actions }) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_q, quit, {0})
 
 /* unmodified key bindings (no modifier required) */
