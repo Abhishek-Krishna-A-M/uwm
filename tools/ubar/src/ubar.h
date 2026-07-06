@@ -120,9 +120,6 @@ typedef struct {
 	int display_pipe[2];
 	int uinput_fd;
 
-	/* Partial damage: previous frame item positions */
-	int prev_zones[MAX_ZONES];
-	int prev_zone_count;
 } State;
 
 uint32_t parse_color(const char *hex);

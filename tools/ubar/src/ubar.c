@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
 	}
 
 	/* Shutdown */
-	data_stop_monitors(&state);
+	data_stop_monitors();
 
 	if (state.workspace_group)
 		zwp_uwm_workspace_group_v1_destroy(state.workspace_group);

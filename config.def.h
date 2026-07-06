@@ -13,15 +13,10 @@
 #define UNFOCUS_DIM 0.85f
 #define INNER_GAP 5
 
-/* multi-monitor */
-#define AUTO_ENABLE_OUTPUTS true    /* automatically enable new outputs */
-#define AUTO_ARRANGE_OUTPUTS true   /* auto-arrange outputs left-to-right */
-#define MIRROR_NEW_OUTPUTS false    /* mirror on new outputs (false = extend) */
-
 /* input */
 #define FOCUS_FOLLOWS_POINTER true
 #define KEY_REPEAT_DELAY 250
-#define KEY_REPEAT_RATE 40
+#define KEY_REPEAT_RATE 55
 #define TAP_TO_CLICK true
 #define NATURAL_SCROLL true
 #define ACCEL_PROFILE 0.75

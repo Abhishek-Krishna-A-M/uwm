@@ -24,6 +24,4 @@ struct uwm_idle_inhibit {
 bool idle_inhibit_create(struct uwm_server *server);
 void idle_inhibit_destroy(struct uwm_server *server);
 
-bool idle_inhibit_is_inhibited(struct uwm_server *server);
-
 #endif /* IDLE_INHIBIT_H */

@@ -40,7 +40,6 @@ void workspace_manager_finish(struct uwm_workspace_manager *wm,
 
 /* Workspace switching on the focused output */
 void workspace_switch(struct uwm_server *server, uint32_t workspace);
-void workspace_switch_on_output(struct uwm_output *output, uint32_t workspace);
 void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace);
 void workspace_focus_previous(struct uwm_server *server);
 void workspace_cycle_next(struct uwm_server *server);
@@ -48,7 +47,6 @@ void workspace_prev(struct uwm_server *server);
 void workspace_next(struct uwm_server *server);
 
 /* Output-derived helpers */
-struct uwm_output *workspace_get_output(struct uwm_workspace *ws);
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,
 	struct uwm_output *output);
 

@@ -76,6 +76,4 @@ void idle_inhibit_destroy(struct uwm_server *server) {
 	wlr_log(WLR_INFO, "Idle inhibit protocol destroyed");
 }
 
-bool idle_inhibit_is_inhibited(struct uwm_server *server) {
-	return !wl_list_empty(&server->idle_inhibitors);
-}
+

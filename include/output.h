@@ -46,10 +46,7 @@ void server_new_output(struct wl_listener *listener, void *data);
 void output_set_workspace(struct uwm_output *output, uint32_t workspace_id);
 struct uwm_output *output_from_wlr_output(struct uwm_server *server,
 	struct wlr_output *wlr_output);
-struct uwm_output *output_from_cursor(struct uwm_server *server);
 struct uwm_output *output_first(struct uwm_server *server);
-struct uwm_output *output_next(struct uwm_output *output);
-
 /* Output layout change callback (hooked in server.c) */
 void handle_output_layout_change(struct wl_listener *listener, void *data);
 

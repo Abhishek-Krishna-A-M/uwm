@@ -465,8 +465,8 @@ void get_output_size(struct uwm_workspace *ws,
 {
 	struct uwm_output *output = ws->output;
 	if (output) {
-		*x = output->usable_area.x;
-		*y = output->usable_area.y;
+		*x = output->lx + output->usable_area.x;
+		*y = output->ly + output->usable_area.y;
 		*w = output->usable_area.width;
 		*h = output->usable_area.height;
 	} else {
@@ -604,21 +604,6 @@ struct uwm_toplevel *bsp_focus_down(struct uwm_workspace *workspace)
 	struct uwm_bsp_node *best = bsp_nearest_in_direction(
 		workspace, focused_leaf, 3);
 	return best ? best->toplevel : NULL;
-}
-
-static void bsp_swap(
-	struct uwm_workspace *workspace,
-	struct uwm_toplevel *a,
-	struct uwm_toplevel *b)
-{
-	struct uwm_bsp_node *leaf_a = bsp_find_leaf(workspace->root, a);
-	struct uwm_bsp_node *leaf_b = bsp_find_leaf(workspace->root, b);
-	if (leaf_a == NULL || leaf_b == NULL)
-		return;
-
-	struct uwm_toplevel *tmp = leaf_a->toplevel;
-	leaf_a->toplevel = leaf_b->toplevel;
-	leaf_b->toplevel = tmp;
 }
 
 void bsp_swap_direction(

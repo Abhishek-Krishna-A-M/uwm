@@ -91,39 +91,35 @@ bool data_update_cpu(State *state) {
 
 /* --- Temperature (cached thermal zone, /sys) --- */
 
+static int read_temp_from_zone(int zone) {
+	char path[64];
+	snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", zone);
+	FILE *f = fopen(path, "r");
+	if (!f) return -1;
+	int raw;
+	int ret = (fscanf(f, "%d", &raw) == 1 && raw / 1000 > 0) ? raw / 1000 : -1;
+	fclose(f);
+	return ret;
+}
+
 bool data_update_temp(State *state) {
 	if (cached_thermal_zone >= 0) {
-		char path[64];
-		snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp",
-			cached_thermal_zone);
-		FILE *f = fopen(path, "r");
-		if (f) {
-			int raw;
-			if (fscanf(f, "%d", &raw) == 1) {
-				int new_temp = (raw / 1000 > 0) ? raw / 1000 : 0;
-				fclose(f);
-				if (new_temp == state->temp_c) return false;
-				state->temp_c = new_temp;
-				return true;
-			}
-			fclose(f);
+		int new_temp = read_temp_from_zone(cached_thermal_zone);
+		if (new_temp >= 0) {
+			if (new_temp == state->temp_c) return false;
+			state->temp_c = new_temp;
+			return true;
 		}
 		cached_thermal_zone = -1;
 	}
 
-	char path[64];
 	for (int i = 0; i < 6; i++) {
-		snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", i);
-		FILE *f = fopen(path, "r");
-		if (!f) continue;
-		int raw;
-		if (fscanf(f, "%d", &raw) == 1) {
-			state->temp_c = (raw / 1000 > 0) ? raw / 1000 : 0;
-			fclose(f);
+		int new_temp = read_temp_from_zone(i);
+		if (new_temp >= 0) {
+			state->temp_c = new_temp;
 			cached_thermal_zone = i;
 			return true;
 		}
-		fclose(f);
 	}
 	return false;
 }
@@ -333,59 +329,49 @@ static void audio_context_state_cb(pa_context *c, void *userdata) {
 
 static void *audio_monitor_thread(void *arg) {
 	State *state = arg;
-	struct audio_monitor_state ams = {0};
-	ams.app = state;
+	struct audio_monitor_state *ams = calloc(1, sizeof(struct audio_monitor_state));
+	if (!ams) return NULL;
+	ams->app = state;
 
-	ams.mainloop = pa_threaded_mainloop_new();
-	if (!ams.mainloop) {
+	ams->mainloop = pa_threaded_mainloop_new();
+	if (!ams->mainloop) {
 		LOG("pa_threaded_mainloop_new failed");
+		free(ams);
 		return NULL;
 	}
 
-	pa_mainloop_api *api = pa_threaded_mainloop_get_api(ams.mainloop);
-	ams.context = pa_context_new(api, "ubar");
-	if (!ams.context) {
-		pa_threaded_mainloop_free(ams.mainloop);
+	pa_mainloop_api *api = pa_threaded_mainloop_get_api(ams->mainloop);
+	ams->context = pa_context_new(api, "ubar");
+	if (!ams->context) {
+		pa_threaded_mainloop_free(ams->mainloop);
+		free(ams);
 		return NULL;
 	}
 
-	/* Find default sink from PulseAudio server name property */
-	pa_proplist *proplist = pa_proplist_new();
-	pa_proplist_sets(proplist, PA_PROP_APPLICATION_NAME, "ubar");
-	pa_proplist_sets(proplist, PA_PROP_APPLICATION_ID, "org.ubar");
-	pa_context *tmp_ctx = pa_context_new_with_proplist(api, "ubar-init", proplist);
-	pa_proplist_free(proplist);
-	if (tmp_ctx) {
-		/* We can't easily get the default sink name without connecting.
-		 * Use the well-known PipeWire default sink name. */
-		pa_context_disconnect(tmp_ctx);
-		pa_context_unref(tmp_ctx);
-	}
-
-	/* Use PULSE_SINK env var, or NULL for PA default sink */
 	const char *sink_env = getenv("PULSE_SINK");
 	if (sink_env)
-		snprintf(ams.default_sink, sizeof(ams.default_sink), "%s", sink_env);
+		snprintf(ams->default_sink, sizeof(ams->default_sink), "%s", sink_env);
 
-	pa_context_set_state_callback(ams.context, audio_context_state_cb, &ams);
+	pa_context_set_state_callback(ams->context, audio_context_state_cb, ams);
 
-	pa_threaded_mainloop_lock(ams.mainloop);
-	pa_context_connect(ams.context, NULL, PA_CONTEXT_NOFLAGS, NULL);
-	pa_threaded_mainloop_unlock(ams.mainloop);
+	pa_threaded_mainloop_lock(ams->mainloop);
+	pa_context_connect(ams->context, NULL, PA_CONTEXT_NOFLAGS, NULL);
+	pa_threaded_mainloop_unlock(ams->mainloop);
 
-	pa_threaded_mainloop_start(ams.mainloop);
+	pa_threaded_mainloop_start(ams->mainloop);
 
 	while (g_monitors_running) {
-		usleep(100000); /* 100ms check interval for shutdown */
+		usleep(100000);
 	}
 
-	pa_threaded_mainloop_lock(ams.mainloop);
-	pa_threaded_mainloop_stop(ams.mainloop);
-	pa_context_disconnect(ams.context);
-	pa_context_unref(ams.context);
-	pa_threaded_mainloop_unlock(ams.mainloop);
-	pa_threaded_mainloop_free(ams.mainloop);
+	pa_threaded_mainloop_lock(ams->mainloop);
+	pa_threaded_mainloop_stop(ams->mainloop);
+	pa_context_disconnect(ams->context);
+	pa_context_unref(ams->context);
+	pa_threaded_mainloop_unlock(ams->mainloop);
+	pa_threaded_mainloop_free(ams->mainloop);
 
+	free(ams);
 	return NULL;
 }
 
@@ -503,23 +489,22 @@ void data_init_fast(State *state) {
 	data_update_locks_hardware(state);
 }
 
+static pthread_t g_audio_thread, g_network_thread, g_display_thread;
+
 void data_start_monitors(State *state) {
 	g_monitors_running = true;
 
-	pthread_t t1, t2, t3;
-	pthread_create(&t1, NULL, audio_monitor_thread, state);
-	pthread_detach(t1);
-	pthread_create(&t2, NULL, network_monitor_thread, state);
-	pthread_detach(t2);
-	pthread_create(&t3, NULL, display_monitor_thread, state);
-	pthread_detach(t3);
+	pthread_create(&g_audio_thread, NULL, audio_monitor_thread, state);
+	pthread_create(&g_network_thread, NULL, network_monitor_thread, state);
+	pthread_create(&g_display_thread, NULL, display_monitor_thread, state);
 }
 
-void data_stop_monitors(State *state) {
+void data_stop_monitors(void) {
 	g_monitors_running = false;
-	/* Give threads time to exit */
-	usleep(200000);
-	(void)state;
+
+	pthread_join(g_audio_thread, NULL);
+	pthread_join(g_network_thread, NULL);
+	pthread_join(g_display_thread, NULL);
 }
 
 /* ================================================================

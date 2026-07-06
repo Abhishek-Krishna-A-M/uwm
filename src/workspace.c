@@ -78,14 +78,15 @@ static void workspace_hide(struct uwm_workspace *ws)
 void workspace_hide_from_output(struct uwm_workspace *ws,
 		struct uwm_output *output)
 {
-	(void)output;
-	/* In the current shared scene graph model, all windows are
-	 * positioned in global layout coordinates. When a workspace is
-	 * removed from an output, we simply hide all its windows.
-	 * Later, per-output scene trees could make this more granular,
-	 * but this is correct for the v1 model. */
 	if (ws->output)
-		return; /* workspace still has an output, don't hide */
+		return;
+
+	/* Restore bar layers when switching away from a fullscreen ws */
+	if (ws->fullscreen_window && output) {
+		wlr_scene_node_set_enabled(&output->layer_top->node, true);
+		wlr_scene_node_set_enabled(&output->layer_overlay->node, true);
+	}
+
 	workspace_hide(ws);
 }
 
@@ -118,7 +119,12 @@ static void workspace_show(struct uwm_workspace *ws)
 void workspace_show_on_output(struct uwm_workspace *ws,
 		struct uwm_output *output)
 {
-	(void)output;
+	/* Hide bar layers when switching to a fullscreen workspace */
+	if (ws->fullscreen_window && output) {
+		wlr_scene_node_set_enabled(&output->layer_top->node, false);
+		wlr_scene_node_set_enabled(&output->layer_overlay->node, false);
+	}
+
 	workspace_show(ws);
 }
 
@@ -135,11 +141,6 @@ void workspace_switch(struct uwm_server *server, uint32_t workspace)
 			return;
 	}
 
-	output_set_workspace(output, workspace);
-}
-
-void workspace_switch_on_output(struct uwm_output *output, uint32_t workspace)
-{
 	output_set_workspace(output, workspace);
 }
 
@@ -192,6 +193,19 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		bsp_remove(old_ws, toplevel);
 		wl_list_remove(&toplevel->workspace_link);
 		wl_list_init(&toplevel->workspace_link);
+
+		if (old_ws->monocle) {
+			int count = 0;
+			struct uwm_toplevel *tl;
+			wl_list_for_each(tl, &old_ws->toplevels, workspace_link) {
+				count++;
+			}
+			if (count <= 1) {
+				old_ws->monocle = false;
+				if (old_ws->root)
+					set_children_visible(old_ws->root, true);
+			}
+		}
 	}
 
 	toplevel->workspace = new_ws;
@@ -294,11 +308,6 @@ void workspace_next(struct uwm_server *server)
 	uint32_t current = server->workspaces.current;
 	uint32_t next = (current + 1) % UWM_WORKSPACE_COUNT;
 	workspace_switch(server, next);
-}
-
-struct uwm_output *workspace_get_output(struct uwm_workspace *ws)
-{
-	return ws->output;
 }
 
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,

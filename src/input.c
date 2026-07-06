@@ -540,11 +540,22 @@ static void server_new_keyboard(struct uwm_server *server, struct wlr_input_devi
 	struct wlr_keyboard *wlr_keyboard = wlr_keyboard_from_input_device(device);
 
 	struct uwm_keyboard *keyboard = calloc(1, sizeof(*keyboard));
+	if (!keyboard)
+		return;
 	keyboard->server = server;
 	keyboard->wlr_keyboard = wlr_keyboard;
 
 	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if (!context) {
+		free(keyboard);
+		return;
+	}
 	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (!keymap) {
+		xkb_context_unref(context);
+		free(keyboard);
+		return;
+	}
 
 	wlr_keyboard_set_keymap(wlr_keyboard, keymap);
 	xkb_keymap_unref(keymap);

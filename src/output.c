@@ -283,6 +283,8 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	wlr_output_state_finish(&state);
 
 	struct uwm_output *output = calloc(1, sizeof(*output));
+	if (!output)
+		return;
 	output->wlr_output = wlr_output;
 	output->server = server;
 	wlr_output->data = output;
@@ -388,14 +390,6 @@ struct uwm_output *output_from_wlr_output(struct uwm_server *server,
 	return NULL;
 }
 
-struct uwm_output *output_from_cursor(struct uwm_server *server) {
-	struct wlr_output *wlr_out = wlr_output_layout_output_at(
-		server->output_layout, server->cursor->x, server->cursor->y);
-	if (!wlr_out)
-		return NULL;
-	return output_from_wlr_output(server, wlr_out);
-}
-
 struct uwm_output *output_first(struct uwm_server *server) {
 	if (wl_list_empty(&server->outputs))
 		return NULL;
@@ -404,11 +398,4 @@ struct uwm_output *output_first(struct uwm_server *server) {
 	return output;
 }
 
-struct uwm_output *output_next(struct uwm_output *output) {
-	struct wl_list *next = output->link.next;
-	if (next == &output->server->outputs)
-		return NULL;
-	struct uwm_output *next_out;
-	next_out = wl_container_of(next, next_out, link);
-	return next_out;
-}
+

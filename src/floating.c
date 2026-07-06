@@ -9,6 +9,7 @@
 #include "output.h"
 #include "server.h"
 #include "config.h"
+#include "layout.h"
 
 void raise_floating(struct uwm_toplevel *window)
 {
@@ -110,6 +111,19 @@ void toggle_floating(struct uwm_toplevel *window)
 			window->float_width, window->float_height);
 
 		raise_floating(window);
+
+		if (ws->monocle) {
+			int count = 0;
+			struct uwm_toplevel *tl;
+			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+				count++;
+			}
+			if (count <= 1) {
+				ws->monocle = false;
+				if (ws->root)
+					set_children_visible(ws->root, true);
+			}
+		}
 	} else {
 		window->floating = false;
 		wl_list_remove(&window->floating_link);

@@ -11,8 +11,6 @@
 #include <sys/wait.h>
 #include <linux/uinput.h>
 
-static State *g_state = NULL;
-
 static int uinput_init(void) {
 	int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
 	if (fd < 0) {
@@ -206,7 +204,6 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 void input_init(State *state, struct wl_seat *seat) {
-	g_state = state;
 	state->seat = seat;
 	state->uinput_fd = uinput_init();
 	wl_seat_add_listener(seat, &seat_listener, state);

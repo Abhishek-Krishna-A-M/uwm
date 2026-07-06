@@ -286,33 +286,7 @@ void render_frame(State *state) {
 
 	wl_surface_attach(state->surface, buf->buffer, 0, 0);
 
-	/* Partial damage: only redraw regions that changed */
-	bool full_damage = (state->prev_zone_count != zone_idx);
-	if (!full_damage) {
-		for (int i = 0; i < zone_idx; i++) {
-			if (state->prev_zones[i * 2] != state->zones[i].x ||
-			    state->prev_zones[i * 2 + 1] != state->zones[i].width) {
-				full_damage = true;
-				break;
-			}
-		}
-	}
-
-	if (full_damage) {
-		wl_surface_damage(state->surface, 0, 0, state->width, state->height);
-	} else {
-		/* Damage the entire bar — text positions are packed tight and
-		 * even small changes (like clock digits) affect adjacent pixels.
-		 * Full damage is the safe choice for a 30px-high bar. */
-		wl_surface_damage(state->surface, 0, 0, state->width, state->height);
-	}
-
-	/* Save current zones for next frame comparison */
-	for (int i = 0; i < zone_idx; i++) {
-		state->prev_zones[i * 2] = state->zones[i].x;
-		state->prev_zones[i * 2 + 1] = state->zones[i].width;
-	}
-	state->prev_zone_count = zone_idx;
+	wl_surface_damage(state->surface, 0, 0, state->width, state->height);
 
 	wl_surface_commit(state->surface);
 	wl_display_flush(state->display);

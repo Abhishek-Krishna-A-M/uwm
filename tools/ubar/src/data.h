@@ -6,7 +6,7 @@
 
 void data_init_fast(State *state);
 void data_start_monitors(State *state);
-void data_stop_monitors(State *state);
+void data_stop_monitors(void);
 
 bool data_update_clock(State *state);
 bool data_update_cpu(State *state);
