@@ -178,7 +178,7 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 		}
 		wlr_output_state_finish(&state);
 
-		/* Evacuate workspace when output is disabled */
+		/* Output disabled: detach workspace, redirect focus */
 		if (was_enabled && !will_be_enabled && output) {
 			struct uwm_workspace *ws =
 				&server->workspaces.workspaces[output->current_workspace];
@@ -190,36 +190,28 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 				if (iter != output) { target = iter; break; }
 			}
 
-			if (target) {
-				struct uwm_workspace *target_ws =
-					&server->workspaces.workspaces[target->current_workspace];
-				struct uwm_toplevel *tl, *tmp;
-				wl_list_for_each_safe(tl, tmp, &ws->toplevels, workspace_link)
-					workspace_move_toplevel(tl, target->current_workspace);
-				wl_list_for_each_safe(tl, tmp, &ws->floating_windows, floating_link)
-					workspace_move_toplevel(tl, target->current_workspace);
-				if (target_ws->root)
-					bsp_arrange(target_ws, target->usable_area.x,
-						target->usable_area.y,
-						target->usable_area.width,
-						target->usable_area.height,
-						server->config.inner_gap);
-				if (server->active_output == output)
-					server->active_output = target;
+			if (server->active_output == output) {
+				server->active_output = target ? target : NULL;
 			}
 		}
 
-		/* Restore workspace when output is enabled */
+		/* Output enabled: reconnect workspace, arrange, show */
 		if (!was_enabled && will_be_enabled && output) {
+			uint32_t ws_id = output->current_workspace;
 			struct uwm_workspace *ws =
-				&server->workspaces.workspaces[output->current_workspace];
+				&server->workspaces.workspaces[ws_id];
+
+			/* Reclaim workspace if another output took it while disabled */
+			if (ws->output && ws->output != output) {
+				ws->output->current_workspace = ws_id;
+			}
 			ws->output = output;
 
 			layer_surface_arrange(output);
 
 			if (!server->active_output) {
 				server->active_output = output;
-				server->workspaces.current = output->current_workspace;
+				server->workspaces.current = ws_id;
 			}
 
 			if (ws->root)
