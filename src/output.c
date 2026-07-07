@@ -332,6 +332,16 @@ void server_new_output(struct wl_listener *listener, void *data) {
 
 	/* Create scene output and attach to layout */
 	output->scene_output = wlr_scene_output_create(server->scene, wlr_output);
+	if (!output->scene_output) {
+		wlr_log(WLR_ERROR, "failed to create scene output for %s",
+			wlr_output->name);
+		wl_list_remove(&output->frame.link);
+		wl_list_remove(&output->request_state.link);
+		wl_list_remove(&output->destroy.link);
+		wl_list_remove(&output->link);
+		free(output);
+		return;
+	}
 	wlr_scene_output_layout_add_output(
 		server->scene_layout, output->layout_output, output->scene_output);
 

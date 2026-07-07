@@ -692,13 +692,22 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 		return;
 	popup->xdg_popup = xdg_popup;
 
+	/* Wire listeners FIRST so the client always receives a configure
+	 * event on commit. If scene-tree setup fails below, the popup
+	 * won't render but the client will not hang. */
+	popup->commit.notify = xdg_popup_commit;
+	wl_signal_add(&xdg_popup->base->surface->events.commit, &popup->commit);
+
+	popup->destroy.notify = xdg_popup_destroy;
+	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
+
 	struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent);
 	if (!parent)
-		goto error;
+		return;
 	struct wlr_scene_tree *parent_tree = parent->data;
 	xdg_popup->base->data = wlr_scene_xdg_surface_create(parent_tree, xdg_popup->base);
 	if (!xdg_popup->base->data)
-		goto error;
+		return;
 
 	/* Find the parent toplevel and its output, then unconstrain the
 	 * popup to the output's bounds so context menus near the screen
@@ -719,14 +728,4 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 		};
 		wlr_xdg_popup_unconstrain_from_box(xdg_popup, &box);
 	}
-
-	popup->commit.notify = xdg_popup_commit;
-	wl_signal_add(&xdg_popup->base->surface->events.commit, &popup->commit);
-
-	popup->destroy.notify = xdg_popup_destroy;
-	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
-	return;
-
-error:
-	free(popup);
 }
