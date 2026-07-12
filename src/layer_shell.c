@@ -81,7 +81,8 @@ void layer_surface_arrange(struct uwm_output *output) {
 	if (changed) {
 		struct uwm_workspace *ws = &server->workspaces.workspaces[output->current_workspace];
 		if (ws->root) {
-			bsp_arrange(ws, usable_area.x, usable_area.y,
+			bsp_arrange(ws, output->lx + usable_area.x,
+				output->ly + usable_area.y,
 				usable_area.width, usable_area.height,
 				server->config.inner_gap);
 		}

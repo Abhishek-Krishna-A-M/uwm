@@ -215,8 +215,8 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 			}
 
 			if (ws->root)
-				bsp_arrange(ws, output->usable_area.x,
-					output->usable_area.y,
+				bsp_arrange(ws, output->lx + output->usable_area.x,
+					output->ly + output->usable_area.y,
 					output->usable_area.width,
 					output->usable_area.height,
 					server->config.inner_gap);

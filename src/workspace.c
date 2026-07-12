@@ -159,7 +159,8 @@ static void workspace_arrange_on_output(struct uwm_workspace *ws,
 		struct uwm_output *output, int gap)
 {
 	if (output && ws->root) {
-		bsp_arrange(ws, output->usable_area.x, output->usable_area.y,
+		bsp_arrange(ws, output->lx + output->usable_area.x,
+			output->ly + output->usable_area.y,
 			output->usable_area.width, output->usable_area.height, gap);
 	}
 }
@@ -288,8 +289,8 @@ void workspace_cycle_next(struct uwm_server *server)
 	focus_toplevel(windows[next]);
 
 	if (ws->monocle && ws->output) {
-		bsp_arrange(ws, ws->output->usable_area.x,
-			ws->output->usable_area.y,
+		bsp_arrange(ws, ws->output->lx + ws->output->usable_area.x,
+			ws->output->ly + ws->output->usable_area.y,
 			ws->output->usable_area.width,
 			ws->output->usable_area.height,
 			server->config.inner_gap);

@@ -58,7 +58,8 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 	/* Rearrange the workspace displayed on this output */
 	struct uwm_workspace *ws = &output->server->workspaces.workspaces[output->current_workspace];
 	if (ws->root) {
-		bsp_arrange(ws, output->usable_area.x, output->usable_area.y,
+		bsp_arrange(ws, output->lx + output->usable_area.x,
+			output->ly + output->usable_area.y,
 			output->usable_area.width, output->usable_area.height,
 			output->server->config.inner_gap);
 	}
@@ -100,7 +101,8 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 			workspace_move_toplevel(tl, target->current_workspace);
 		}
 		if (target_ws->root) {
-			bsp_arrange(target_ws, target->usable_area.x, target->usable_area.y,
+			bsp_arrange(target_ws, target->lx + target->usable_area.x,
+				target->ly + target->usable_area.y,
 				target->usable_area.width, target->usable_area.height,
 				server->config.inner_gap);
 		}
@@ -142,6 +144,14 @@ void handle_output_layout_change(struct wl_listener *listener, void *data) {
 		wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
 		output->lx = box.x;
 		output->ly = box.y;
+
+		/* Reposition per-output layer trees to match */
+		wlr_scene_node_set_position(&output->layer_background->node, box.x, box.y);
+		wlr_scene_node_set_position(&output->layer_bottom->node, box.x, box.y);
+		wlr_scene_node_set_position(&output->layer_floating->node, box.x, box.y);
+		wlr_scene_node_set_position(&output->layer_top->node, box.x, box.y);
+		wlr_scene_node_set_position(&output->layer_overlay->node, box.x, box.y);
+		wlr_scene_node_set_position(&output->layer_lock->node, box.x, box.y);
 
 		/* Reposition lock surface if present */
 		if (output->lock_surface && output->lock_surface->surface->data) {
@@ -204,7 +214,8 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id) {
 
 	/* Arrange and show new workspace windows on this output */
 	if (new_ws->root) {
-		bsp_arrange(new_ws, output->usable_area.x, output->usable_area.y,
+		bsp_arrange(new_ws, output->lx + output->usable_area.x,
+			output->ly + output->usable_area.y,
 			output->usable_area.width, output->usable_area.height,
 			server->config.inner_gap);
 	}
@@ -351,6 +362,17 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->lx = box.x;
 	output->ly = box.y;
 
+	/* Offset per-output layer trees to this output's position in the layout.
+	 * Layer surfaces (swaybg, ubar) position relative to their subtree root,
+	 * so the subtree root must be at (lx, ly) for the layer to render within
+	 * this output's viewport. */
+	wlr_scene_node_set_position(&output->layer_background->node, output->lx, output->ly);
+	wlr_scene_node_set_position(&output->layer_bottom->node, output->lx, output->ly);
+	wlr_scene_node_set_position(&output->layer_floating->node, output->lx, output->ly);
+	wlr_scene_node_set_position(&output->layer_top->node, output->lx, output->ly);
+	wlr_scene_node_set_position(&output->layer_overlay->node, output->lx, output->ly);
+	wlr_scene_node_set_position(&output->layer_lock->node, output->lx, output->ly);
+
 	/* Arrange layer surfaces */
 	layer_surface_arrange(output);
 
@@ -366,7 +388,8 @@ void server_new_output(struct wl_listener *listener, void *data) {
 
 	/* Show workspace windows on this output */
 	if (ws->root) {
-		bsp_arrange(ws, output->usable_area.x, output->usable_area.y,
+		bsp_arrange(ws, output->lx + output->usable_area.x,
+			output->ly + output->usable_area.y,
 			output->usable_area.width, output->usable_area.height,
 			server->config.inner_gap);
 	}
