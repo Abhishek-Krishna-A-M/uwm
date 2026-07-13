@@ -24,8 +24,6 @@ UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by 
 - Resize support (tiled ratio and floating dimensions)
 - Split rotation
 - Focus cycling
-- Unfocus dimming (configurable opacity for unfocused windows)
-- Per-window opacity rules
 
 ### Workspaces
 
@@ -85,7 +83,7 @@ UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by 
 - Compile-time keybindings
 - Compile-time window rules (app_id/title matching with globs)
 - Compile-time autostart commands
-- Appearance settings (border, gaps, floating dimensions, unfocus dim)
+- Appearance settings (border, gaps, floating dimensions)
 
 ## Screenshots
 
@@ -287,7 +285,6 @@ UWM does not claim compatibility with any of these projects. It is an independen
 
 - No animations
 - No blur
-- No transparency effects (only per-window opacity)
 - No runtime configuration parser
 - No unnecessary abstractions
 - No plugin system

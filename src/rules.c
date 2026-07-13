@@ -11,15 +11,6 @@
 #include "floating.h"
 #include "rules.h"
 
-static void set_opacity_cb(struct wlr_scene_buffer *buffer,
-		int sx, int sy, void *data)
-{
-	float *opacity = data;
-	wlr_scene_buffer_set_opacity(buffer, *opacity);
-	(void)sx;
-	(void)sy;
-}
-
 static bool glob_match(const char *pattern, const char *string)
 {
 	if (!pattern || !*pattern)
@@ -111,13 +102,6 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 			bsp_insert(toplevel->workspace, toplevel);
 		}
 		toggle_fullscreen(toplevel);
-	}
-
-	if (rule->has_opacity) {
-		float op = rule->opacity;
-		wlr_scene_node_for_each_buffer(
-			&toplevel->scene_tree->node,
-			set_opacity_cb, &op);
 	}
 }
 

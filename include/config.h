@@ -32,8 +32,6 @@ struct uwm_rule {
 	int workspace;
 	bool set_floating;
 	bool set_fullscreen;
-	bool has_opacity;
-	float opacity;
 };
 
 struct uwm_config {
@@ -66,7 +64,6 @@ extern const int floating_create_min_width;
 extern const int floating_create_min_height;
 extern const float floating_default_width_ratio;
 extern const float floating_default_height_ratio;
-extern const float unfocus_dim;
 
 extern const char *run[];
 extern const char *screenshot[];

@@ -50,7 +50,6 @@ const int floating_create_min_width = FLOATING_CREATE_MIN_WIDTH;
 const int floating_create_min_height = FLOATING_CREATE_MIN_HEIGHT;
 const float floating_default_width_ratio = FLOATING_DEFAULT_WIDTH_RATIO;
 const float floating_default_height_ratio = FLOATING_DEFAULT_HEIGHT_RATIO;
-const float unfocus_dim = UNFOCUS_DIM;
 
 /* compile-time rules */
 static const struct uwm_rule builtin_rules[] = { RULES };

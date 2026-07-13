@@ -10,7 +10,6 @@
 #define FLOATING_DEFAULT_HEIGHT_RATIO 0.75f
 #define FLOATING_CREATE_MIN_WIDTH 200
 #define FLOATING_CREATE_MIN_HEIGHT 150
-#define UNFOCUS_DIM 0.85f
 #define INNER_GAP 5
 
 /* input */
@@ -157,14 +156,13 @@
 	NULL
 
 /* compile-time rules */
-#define RULE(appid, _title, ws, fl, fs, op_en, op_val) \
+#define RULE(appid, _title, ws, fl, fs) \
 	{ .app_id = appid, .title = _title, .workspace = ws, \
-	  .set_floating = fl, .set_fullscreen = fs, \
-	  .has_opacity = op_en, .opacity = op_val },
+	  .set_floating = fl, .set_fullscreen = fs },
 /* Float portal file picker dialogs to prevent BSP tiling from breaking
  * popup positioning and file selection. */
 #define RULES \
-	RULE("xdg-desktop-portal-gtk", NULL, -1, true, false, false, 0) \
-	RULE("xdg-desktop-portal", NULL, -1, true, false, false, 0) \
-	RULE("org.freedesktop.impl.portal.desktop.gtk", NULL, -1, true, false, false, 0) \
-	RULE("org.gtk.Portal", NULL, -1, true, false, false, 0)
+	RULE("xdg-desktop-portal-gtk", NULL, -1, true, false) \
+	RULE("xdg-desktop-portal", NULL, -1, true, false) \
+	RULE("org.freedesktop.impl.portal.desktop.gtk", NULL, -1, true, false) \
+	RULE("org.gtk.Portal", NULL, -1, true, false)

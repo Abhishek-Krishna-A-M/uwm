@@ -8,15 +8,6 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include "window.h"
-
-static void set_window_opacity(struct wlr_scene_buffer *buffer,
-		int sx, int sy, void *data)
-{
-	float *opacity = data;
-	wlr_scene_buffer_set_opacity(buffer, *opacity);
-	(void)sx;
-	(void)sy;
-}
 #include "input.h"
 #include "bsp.h"
 #include "floating.h"
@@ -56,11 +47,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 					if (prev->foreign_toplevel)
 						wlr_foreign_toplevel_handle_v1_set_activated(
 							prev->foreign_toplevel, false);
-					if (!prev->fullscreen) {
-						float dim = unfocus_dim;
-						wlr_scene_node_for_each_buffer(
-							&prev_tree->node, set_window_opacity, &dim);
-					}
 				}
 			}
 		}
@@ -116,9 +102,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	}
-	float full = 1.0f;
-	wlr_scene_node_for_each_buffer(
-		&toplevel->scene_tree->node, set_window_opacity, &full);
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
 		wlr_log(WLR_DEBUG, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
