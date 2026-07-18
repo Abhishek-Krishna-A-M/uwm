@@ -26,6 +26,7 @@
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include "config.h"
 #include "workspace.h"
@@ -134,6 +135,9 @@ struct uwm_server {
 	struct wl_listener output_manager_test;
 	struct wlr_export_dmabuf_manager_v1 *export_dmabuf_manager;
 	struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1;
+
+	/* Fractional scale protocol support */
+	struct wlr_fractional_scale_manager_v1 *fractional_scale_manager;
 
 	/* Transient seat protocol support */
 	struct wlr_transient_seat_manager_v1 *transient_seat_manager;

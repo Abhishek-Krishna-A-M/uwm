@@ -410,6 +410,16 @@ bool server_init(struct uwm_server *server) {
 	wlr_data_control_manager_v1_create(server->wl_display);
 	wlr_ext_data_control_manager_v1_create(server->wl_display, 1);
 
+	/* Fractional scale protocol: clients query per-surface fractional scale
+	 * (e.g. 1.25x, 1.5x) instead of relying on integer wl_output.scale.
+	 * Required by clients like tofi, foot, etc. to render at native DPI. */
+	server->fractional_scale_manager =
+		wlr_fractional_scale_manager_v1_create(server->wl_display, 1);
+	if (!server->fractional_scale_manager) {
+		wlr_log(WLR_ERROR, "failed to create fractional scale manager");
+		return false;
+	}
+
 	/* Transient seat protocol: allows clipboard helpers and similar to request
 	 * a separate seat so their keyboard focus doesn't interfere with the main
 	 * seat. The wlr_seat they get is independent — they can request keyboard

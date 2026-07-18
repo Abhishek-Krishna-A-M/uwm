@@ -241,6 +241,11 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id) {
 
 	/* Notify bar clients */
 	uwm_bar_send_output(output);
+
+	/* Let keyboard-interactive layer surfaces (e.g. rofi) take focus
+	 * if present on this output, so they remain usable after switching
+	 * workspaces instead of being stuck with no keyboard focus. */
+	layer_surface_arrange(output);
 }
 
 void output_manager_update(struct uwm_server *server) {

@@ -1,0 +1,57 @@
+[ak@artixlinux ~]$ wlr-randr 
+HDMI-A-1 "Seiko Epson Corporation EPSON PJ 0x01010101 (HDMI-A-1)"
+  Make: Seiko Epson Corporation
+  Model: EPSON PJ
+  Serial: 0x01010101
+  Enabled: yes
+  Modes:
+    1024x768 px, 60.004002 Hz (preferred, current)
+    1920x1200 px, 59.950001 Hz
+    1920x1080 px, 60.000000 Hz
+    1920x1080 px, 60.000000 Hz
+    1920x1080 px, 59.939999 Hz
+    1920x1080 px, 50.000000 Hz
+    1920x1080 px, 30.000000 Hz
+    1920x1080 px, 30.000000 Hz
+    1920x1080 px, 29.969999 Hz
+    1920x1080 px, 24.000000 Hz
+    1920x1080 px, 23.976000 Hz
+    1600x1200 px, 60.000000 Hz
+    1680x1050 px, 59.882999 Hz
+    1400x1050 px, 59.948002 Hz
+    1600x900 px, 60.000000 Hz
+    1280x1024 px, 60.020000 Hz
+    1440x900 px, 59.901001 Hz
+    1280x960 px, 60.000000 Hz
+    1366x768 px, 59.790001 Hz
+    1280x800 px, 59.810001 Hz
+    1280x720 px, 60.000000 Hz
+    1280x720 px, 60.000000 Hz
+    1280x720 px, 59.939999 Hz
+    1280x720 px, 50.000000 Hz
+    800x600 px, 60.317001 Hz
+    720x576 px, 50.000000 Hz
+    720x576 px, 50.000000 Hz
+    720x480 px, 60.000000 Hz
+    720x480 px, 60.000000 Hz
+    720x480 px, 59.939999 Hz
+    720x480 px, 59.939999 Hz
+    640x480 px, 60.000000 Hz
+    640x480 px, 59.939999 Hz
+    640x480 px, 59.939999 Hz
+  Position: 1366,0
+  Transform: normal
+  Scale: 1.000000
+  Adaptive Sync: disabled
+eDP-1 "BOE 0x076F (eDP-1)"
+  Make: BOE
+  Model: 0x076F
+  Physical size: 340x190 mm
+  Enabled: yes
+  Modes:
+    1366x768 px, 60.058998 Hz (preferred, current)
+    1366x768 px, 40.013000 Hz
+  Position: 0,0
+  Transform: normal
+  Scale: 1.000000
+  Adaptive Sync: disabled

@@ -25,15 +25,15 @@
 
 /* spawnable command argv arrays (NULL-terminated) */
 #define TERM        "footclient", NULL
-#define LAUNCHER    "fuzzel", "--no-icons", "--prompt=󰀻 Apps: ", NULL
-#define RUN         "bash", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
+#define LAUNCHER    "rofi", "-nowm", "-show", "drun", "-display-drun", "󰀻 Apps:", NULL
+#define RUN         "rofi", "-nowm", "-show", "run", "-display-run", " Run:", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy", NULL
 #define FILEMGR     "foot", "-e", "lf", NULL
-#define FINDFILE    "sh", "-c", "f=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt='󰈞 Find File: ') && [ -n \"$f\" ] && foot -e bash -c \"cd \\\"$HOME/$f\\\" && nvim \\\"$HOME/$f\\\"\"", NULL
+#define FINDFILE    "sh", "-c", "file=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | rofi -dmenu -nowm -i -p '󰈞 Find File:') && [ -n \"$file\" ] && footclient -e env FILE=\"$HOME/$file\" sh -c 'cd \"$(dirname \"$(realpath \"$FILE\")\")\" && nvim \"$(realpath \"$FILE\")\" && exec $SHELL'", NULL
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
-#define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
+#define WINSWITCH   "rofi", "-nowm", "-show", "window", "-display-window", "󱂬 Switch:", "-theme-str", "window { width: 40%; } listview { lines: 8; }", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL
 #define VOLUP       "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05+", NULL
 #define VOLDOWN     "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.05-", NULL
