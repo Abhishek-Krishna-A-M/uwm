@@ -7,13 +7,13 @@ pkgdesc="A minimal BSP tiling Wayland compositor built on wlroots"
 arch=('x86_64')
 url="https://github.com/Abhishek-Krishna-A-M/uwm"
 license=('custom:MIT')
-makedepends=('git' 'pkgconf' 'wayland-protocols' 'wayland-scanner')
+makedepends=('git' 'pkgconf' 'wayland-protocols' 'wayland')
 source=("${pkgname}::git+${url}.git")
 sha256sums=('SKIP')
 
 pkgver() {
   cd "${srcdir}/uwm"
-  git describe --long --tags 2>/dev/null | sed 's/\([^-]*-g\)/r\1/;s/-/./g' || echo "${pkgver}"
+  git describe --long --tags 2>/dev/null | sed 's/^v//; s/-/./g' || echo "${pkgver}"
 }
 
 build() {
