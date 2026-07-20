@@ -42,6 +42,7 @@ const size_t keys_unmodified_len = sizeof(keys_unmodified) / sizeof(keys_unmodif
 const char *const autostart[] = { AUTOSTART };
 
 /* scalar settings */
+const char *xkb_options = XKB_OPTIONS;
 const int borderpx = BORDERPX;
 const float resizefactor = RESIZEFACTOR;
 const int floating_min_width = FLOATING_MIN_WIDTH;

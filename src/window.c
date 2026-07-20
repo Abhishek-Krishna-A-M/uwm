@@ -297,12 +297,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		bsp_insert(toplevel->workspace, toplevel);
 	}
 
+	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
+
 	if (!toplevel->workspace->fullscreen_window
 			|| toplevel->workspace->fullscreen_window == toplevel) {
 		focus_toplevel(toplevel);
 	}
-
-	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->workspace != current
 			|| (toplevel->workspace->fullscreen_window
@@ -372,13 +372,23 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->workspace_link);
 	wl_list_init(&toplevel->workspace_link);
 
-	bsp_remove(toplevel->workspace, toplevel);
+	struct uwm_workspace *ws = toplevel->workspace;
+
+	struct uwm_toplevel *bsp_sibling = NULL;
+	if (ws->root && !toplevel->floating) {
+		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
+		if (leaf && leaf->parent) {
+			struct uwm_bsp_node *sib = (leaf->parent->first == leaf)
+				? leaf->parent->second : leaf->parent->first;
+			bsp_sibling = sib->toplevel;
+		}
+	}
+
+	bsp_remove(ws, toplevel);
 
 	int x, y, w, h;
-	get_output_size(toplevel->workspace, &x, &y, &w, &h);
-	bsp_arrange(toplevel->workspace, x, y, w, h, toplevel->server->config.inner_gap);
-
-	struct uwm_workspace *ws = toplevel->workspace;
+	get_output_size(ws, &x, &y, &w, &h);
+	bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
 
 	if (toplevel->fullscreen) {
 		toplevel->fullscreen = false;
@@ -403,15 +413,24 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	bool focus_was_displaced = (ws->focused == toplevel);
 	if (focus_was_displaced) {
 		ws->focused = NULL;
-		struct uwm_toplevel *candidate;
-		wl_list_for_each(candidate, &ws->toplevels, workspace_link) {
-			if (!candidate->is_transient) {
-				ws->focused = candidate;
-				break;
+
+		if (bsp_sibling && !bsp_sibling->is_transient) {
+			ws->focused = bsp_sibling;
+		}
+
+		if (!ws->focused) {
+			struct uwm_toplevel *candidate;
+			wl_list_for_each(candidate, &ws->toplevels, workspace_link) {
+				if (!candidate->is_transient) {
+					ws->focused = candidate;
+					break;
+				}
 			}
 		}
+
 		if (!ws->focused && !wl_list_empty(&ws->floating_windows)) {
-			candidate = wl_container_of(ws->floating_windows.next, candidate, floating_link);
+			struct uwm_toplevel *candidate = wl_container_of(
+				ws->floating_windows.next, candidate, floating_link);
 			ws->focused = candidate;
 		}
 	}

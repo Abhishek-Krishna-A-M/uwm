@@ -56,6 +56,7 @@ extern const size_t keys_len;
 extern const struct key keys_unmodified[];
 extern const size_t keys_unmodified_len;
 
+extern const char *xkb_options;
 extern const int borderpx;
 extern const float resizefactor;
 extern const int floating_min_width;

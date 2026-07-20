@@ -550,7 +550,14 @@ static void server_new_keyboard(struct uwm_server *server, struct wlr_input_devi
 		free(keyboard);
 		return;
 	}
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	struct xkb_rule_names names = {
+		.rules = NULL,
+		.model = NULL,
+		.layout = NULL,
+		.variant = NULL,
+		.options = *xkb_options ? xkb_options : NULL,
+	};
+	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
 	if (!keymap) {
 		xkb_context_unref(context);
 		free(keyboard);

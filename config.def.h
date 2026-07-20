@@ -21,17 +21,20 @@
 #define ACCEL_PROFILE 0.75
 #define POINTER_SPEED 0.2
 
+/* XKB options — set to "caps:escape" to map Caps Lock to Escape */
+#define XKB_OPTIONS "caps:escape"
+
 #define MOD WLR_MODIFIER_LOGO
 
 /* spawnable command argv arrays (NULL-terminated) */
 #define TERM        "footclient", NULL
-#define LAUNCHER    "fuzzel", "--no-icons", "--prompt=󰀻 Apps: ", NULL
-#define RUN         "bash", "-c", "compgen -c | sort -u | fuzzel --no-icons --dmenu --prompt=' Run: ' | xargs -r", NULL
+#define LAUNCHER    "ulaunch", "-D", "-p", "󰀻 Apps: ", NULL
+#define RUN         "bash", "-c", "compgen -c | sort -u | ulaunch -d -p ' Run: ' | xargs -r", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy -t image/png", NULL
 #define FILEMGR     "foot", "-e", "lf", NULL
-#define FINDFILE    "sh", "-c", "f=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | fuzzel --no-icons --dmenu --prompt='󰈞 Find File: ') && [ -n \"$f\" ] && foot -e bash -c \"cd \\\"$HOME/$f\\\" && nvim \\\"$HOME/$f\\\"\"", NULL
+#define FINDFILE    "sh", "-c", "f=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | ulaunch -d -p '󰈞 Find File: ') && [ -n \"$f\" ] && foot -e bash -c \"cd \\\"$HOME/$f\\\" && nvim \\\"$HOME/$f\\\"\"", NULL
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
 #define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL
