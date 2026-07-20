@@ -420,6 +420,15 @@ bool server_init(struct uwm_server *server) {
 		return false;
 	}
 
+	/* Viewporter protocol: allows clients to scale their buffers via
+	 * wp_viewporter. Paired with wp-fractional-scale-v1 — without it,
+	 * clients like tofi fall back to integer-only scaling. */
+	server->viewporter = wlr_viewporter_create(server->wl_display);
+	if (!server->viewporter) {
+		wlr_log(WLR_ERROR, "failed to create viewporter");
+		return false;
+	}
+
 	/* Transient seat protocol: allows clipboard helpers and similar to request
 	 * a separate seat so their keyboard focus doesn't interfere with the main
 	 * seat. The wlr_seat they get is independent — they can request keyboard
