@@ -256,8 +256,43 @@ static void handle_unmap(struct wl_listener *listener, void *data) {
 }
 
 static void handle_new_popup(struct wl_listener *listener, void *data) {
-	(void)listener;
-	(void)data;
+	struct uwm_layer_surface *surface = wl_container_of(listener, surface, new_popup);
+	struct wlr_xdg_popup *xdg_popup = data;
+
+	struct uwm_popup *popup = calloc(1, sizeof(*popup));
+	if (!popup)
+		return;
+	popup->xdg_popup = xdg_popup;
+	popup->toplevel = NULL;
+
+	popup->commit.notify = xdg_popup_commit;
+	wl_signal_add(&xdg_popup->base->surface->events.commit, &popup->commit);
+
+	popup->destroy.notify = xdg_popup_destroy;
+	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
+
+	/* Create scene tree under the layer surface's scene tree */
+	xdg_popup->base->data = wlr_scene_xdg_surface_create(
+		surface->scene_layer_surface->tree, xdg_popup->base);
+	if (!xdg_popup->base->data) {
+		wlr_log(WLR_ERROR, "failed to create scene tree for layer surface popup");
+		return;
+	}
+
+	/* Unconstrain popup to the output's bounds */
+	if (surface->output && surface->output->wlr_output) {
+		struct wlr_box box = {
+			.x = 0,
+			.y = 0,
+			.width = surface->output->wlr_output->width,
+			.height = surface->output->wlr_output->height,
+		};
+		wlr_xdg_popup_unconstrain_from_box(xdg_popup, &box);
+	}
+
+	/* Track in the server's orphan popup list */
+	wl_list_insert(&surface->output->server->popups, &popup->link);
+	wlr_log(WLR_DEBUG, "layer surface popup created");
 }
 
 static void handle_node_destroy(struct wl_listener *listener, void *data) {

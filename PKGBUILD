@@ -1,13 +1,13 @@
 # Maintainer: Abhishek Krishna A M abhishekkrishna2k6@gmail.com
 
-pkgname=('uwm' 'ubar')
+pkgname=('uwm' 'ubar' 'ulaunch')
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="A minimal BSP tiling Wayland compositor built on wlroots"
 arch=('x86_64')
 url="https://github.com/Abhishek-Krishna-A-M/uwm"
 license=('custom:MIT')
-makedepends=('git' 'pkgconf' 'wayland-protocols')
+makedepends=('git' 'pkgconf' 'wayland-protocols' 'wayland-scanner')
 source=("${pkgname}::git+${url}.git")
 sha256sums=('SKIP')
 
@@ -20,6 +20,7 @@ build() {
   cd "${srcdir}/uwm"
   make
   make -C tools/ubar
+  make -C tools/ulaunch
 }
 
 package_uwm() {
@@ -31,7 +32,7 @@ package_uwm() {
   )
   optdepends=(
     'foot: default terminal (footclient)'
-    'fuzzel: application launcher and dmenu'
+    'ulaunch: application launcher and dmenu'
     'grim: screenshot utility'
     'slurp: region selection for screenshots'
     'wl-clipboard: clipboard (wl-copy) for screenshots'
@@ -62,4 +63,18 @@ package_ubar() {
   cd "${srcdir}/uwm/tools/ubar"
   install -Dm755 ubar "${pkgdir}/usr/bin/ubar"
   install -Dm644 ../../LICENSE "${pkgdir}/usr/share/licenses/ubar/LICENSE" 2>/dev/null || true
+}
+
+package_ulaunch() {
+  depends=(
+    'cairo'
+    'pango'
+    'pangocairo'
+    'wayland-client'
+    'xkbcommon'
+  )
+
+  cd "${srcdir}/uwm/tools/ulaunch"
+  install -Dm755 ulaunch "${pkgdir}/usr/bin/ulaunch"
+  install -Dm644 ../../LICENSE "${pkgdir}/usr/share/licenses/ulaunch/LICENSE" 2>/dev/null || true
 }

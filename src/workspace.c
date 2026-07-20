@@ -141,6 +141,17 @@ void workspace_switch(struct uwm_server *server, uint32_t workspace)
 			return;
 	}
 
+	/* Dismiss popups on all toplevels of the current workspace before
+	 * switching away. */
+	struct uwm_workspace *old_ws = &server->workspaces.workspaces[output->current_workspace];
+	struct uwm_toplevel *tl, *tmp;
+	wl_list_for_each_safe(tl, tmp, &old_ws->toplevels, workspace_link) {
+		dismiss_toplevel_popups(tl);
+	}
+	wl_list_for_each_safe(tl, tmp, &old_ws->floating_windows, floating_link) {
+		dismiss_toplevel_popups(tl);
+	}
+
 	output_set_workspace(output, workspace);
 }
 

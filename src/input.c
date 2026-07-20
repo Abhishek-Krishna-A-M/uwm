@@ -511,6 +511,26 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 		}
 	}
 
+	if (!handled && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		for (int i = 0; i < nsyms; i++) {
+			if (syms_copy[i] == XKB_KEY_Escape) {
+				struct uwm_workspace *ws = current_ws();
+				if (ws->focused && !wl_list_empty(&ws->focused->popups)) {
+					dismiss_toplevel_popups(ws->focused);
+					handled = true;
+				}
+				if (!wl_list_empty(&server->popups)) {
+					struct uwm_popup *popup, *tmp;
+					wl_list_for_each_safe(popup, tmp, &server->popups, link) {
+						wlr_xdg_popup_destroy(popup->xdg_popup);
+					}
+					handled = true;
+				}
+				break;
+			}
+		}
+	}
+
 	if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED
 			&& event->keycode == keyboard->repeat_keycode) {
 		keyboard_repeat_stop(keyboard);
@@ -845,6 +865,31 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 
 		if (toplevel && !toplevel->is_transient)
 			focus_toplevel(toplevel);
+
+		/* Dismiss popups if the click is outside the focused toplevel's
+		 * popup tree. This is the safety net when xdg_popup.grab serial
+		 * validation failed and wlroots hasn't installed a popup grab. */
+		struct uwm_workspace *ws = &server->workspaces.workspaces[server->workspaces.current];
+		struct uwm_toplevel *focused = ws->focused;
+		if (focused && !wl_list_empty(&focused->popups)) {
+			bool on_popup = false;
+			if (surface) {
+				struct uwm_popup *popup;
+				wl_list_for_each(popup, &focused->popups, link) {
+					if (popup->xdg_popup->base->surface == surface) {
+						on_popup = true;
+						wlr_log(WLR_DEBUG, "CLICK on popup surface (matched)");
+						break;
+					}
+				}
+			}
+			wlr_log(WLR_DEBUG, "CLICK outside-check: focused=%s surface=%p on_popup=%d",
+				focused->xdg_toplevel->app_id ? focused->xdg_toplevel->app_id : "(null)",
+				(void *)surface, on_popup);
+			if (!on_popup) {
+				dismiss_toplevel_popups(focused);
+			}
+		}
 	} else {
 		wlr_seat_pointer_notify_button(server->seat,
 			event->time_msec, event->button, event->state);

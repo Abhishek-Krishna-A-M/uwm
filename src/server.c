@@ -321,6 +321,7 @@ bool server_init(struct uwm_server *server) {
 	wl_list_init(&server->outputs);
 	wl_list_init(&server->toplevels);
 	wl_list_init(&server->keyboards);
+	wl_list_init(&server->popups);
 
 	/* The backend is a wlroots feature which abstracts the underlying input and
 	 * output hardware. The autocreate option will choose the most suitable

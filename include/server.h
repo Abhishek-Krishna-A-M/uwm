@@ -148,6 +148,9 @@ struct uwm_server {
 	struct wlr_transient_seat_manager_v1 *transient_seat_manager;
 	struct wl_listener transient_seat_create;
 
+	/* Orphan popups (from layer surfaces, etc.) */
+	struct wl_list popups;
+
 	/* UWM bar protocol */
 	struct uwm_bar_manager *bar_manager;
 	struct wl_event_source *bar_idle_source;

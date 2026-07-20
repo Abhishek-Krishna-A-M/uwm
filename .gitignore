@@ -107,3 +107,6 @@ vgcore.*
 # User configuration override
 config.h
 
+# Tool binaries
+tools/ulaunch/ulaunch
+

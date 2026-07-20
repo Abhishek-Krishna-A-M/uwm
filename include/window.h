@@ -50,6 +50,9 @@ struct uwm_toplevel {
 	unsigned int bsp_saved_is_second : 1;
 	unsigned int bsp_saved : 1;
 
+	/* --- popups --- */
+	struct wl_list popups;
+
 	/* --- listeners (cold path) --- */
 	struct wl_listener map;
 	struct wl_listener unmap;
@@ -67,6 +70,8 @@ struct uwm_toplevel {
 
 struct uwm_popup {
 	struct wlr_xdg_popup *xdg_popup;
+	struct uwm_toplevel *toplevel;
+	struct wl_list link;
 	struct wl_listener commit;
 	struct wl_listener destroy;
 };
@@ -79,5 +84,8 @@ struct uwm_toplevel *desktop_toplevel_at(
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);
 void server_new_xdg_popup(struct wl_listener *listener, void *data);
 void server_new_toplevel_decoration(struct wl_listener *listener, void *data);
+void dismiss_toplevel_popups(struct uwm_toplevel *toplevel);
+void xdg_popup_commit(struct wl_listener *listener, void *data);
+void xdg_popup_destroy(struct wl_listener *listener, void *data);
 
 #endif /* WINDOW_H */

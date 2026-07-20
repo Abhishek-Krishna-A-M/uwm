@@ -47,6 +47,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 					if (prev->foreign_toplevel)
 						wlr_foreign_toplevel_handle_v1_set_activated(
 							prev->foreign_toplevel, false);
+					dismiss_toplevel_popups(prev);
 				}
 			}
 		}
@@ -363,6 +364,8 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		app_id ? app_id : "(nil)", title ? title : "(nil)",
 		(void *)seat->keyboard_state.focused_surface);
 
+	dismiss_toplevel_popups(toplevel);
+
 	if (toplevel == toplevel->server->grabbed_toplevel) {
 		reset_cursor_mode(toplevel->server);
 	}
@@ -639,6 +642,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
 	wl_list_init(&toplevel->link);
 	wl_list_init(&toplevel->workspace_link);
+	wl_list_init(&toplevel->popups);
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	if (!toplevel->scene_tree) {
 		free(toplevel);
@@ -669,25 +673,43 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	wl_signal_add(&xdg_toplevel->events.request_fullscreen, &toplevel->request_fullscreen);
 }
 
-static void xdg_popup_commit(struct wl_listener *listener, void *data) {
+void xdg_popup_commit(struct wl_listener *listener, void *data) {
 	struct uwm_popup *popup = wl_container_of(listener, popup, commit);
 
-	if (popup->xdg_popup->base->initial_commit) {
+	if (popup->xdg_popup->base->initialized) {
 		wlr_xdg_surface_schedule_configure(popup->xdg_popup->base);
 	}
 }
 
-static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
+void xdg_popup_destroy(struct wl_listener *listener, void *data) {
 	struct uwm_popup *popup = wl_container_of(listener, popup, destroy);
+
+	wlr_log(WLR_INFO, "POPUP DESTROY: popup=%p toplevel=%p", (void *)popup, (void *)popup->toplevel);
 
 	wl_list_remove(&popup->commit.link);
 	wl_list_remove(&popup->destroy.link);
+	wl_list_remove(&popup->link);
 
 	free(popup);
 }
 
+void dismiss_toplevel_popups(struct uwm_toplevel *toplevel) {
+	struct uwm_popup *popup, *tmp;
+	wl_list_for_each_safe(popup, tmp, &toplevel->popups, link) {
+		wlr_log(WLR_INFO, "DISMISS popup for toplevel app_id=%s",
+			toplevel->xdg_toplevel->app_id ? toplevel->xdg_toplevel->app_id : "(null)");
+		wlr_xdg_popup_destroy(popup->xdg_popup);
+	}
+}
+
 void server_new_xdg_popup(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, new_xdg_popup);
 	struct wlr_xdg_popup *xdg_popup = data;
+
+	const char *app_id = xdg_popup->parent ? "?" : NULL;
+	wlr_log(WLR_INFO, "NEW POPUP: parent_surface=%p parent_app_id=%s",
+		(void *)xdg_popup->parent,
+		app_id ? app_id : "(null)");
 
 	struct uwm_popup *popup = calloc(1, sizeof(*popup));
 	if (!popup)
@@ -705,23 +727,24 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 
 	struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent);
 	if (!parent)
-		return;
+		goto orphan;
 	struct wlr_scene_tree *parent_tree = parent->data;
 	xdg_popup->base->data = wlr_scene_xdg_surface_create(parent_tree, xdg_popup->base);
 	if (!xdg_popup->base->data)
-		return;
+		goto orphan;
 
-	/* Find the parent toplevel and its output, then unconstrain the
-	 * popup to the output's bounds so context menus near the screen
-	 * edge are repositioned by wlroots to stay on-screen. */
-	struct uwm_toplevel *toplevel = NULL;
+	/* Find the owning toplevel by walking up the scene tree */
 	struct wlr_scene_tree *tree = parent_tree;
 	while (tree && !tree->node.data)
 		tree = tree->node.parent;
 	if (tree)
-		toplevel = tree->node.data;
-	if (toplevel && toplevel->workspace && toplevel->workspace->output) {
-		struct uwm_output *output = toplevel->workspace->output;
+		popup->toplevel = tree->node.data;
+
+	/* Find the toplevel's output, then unconstrain the popup to the
+	 * output's bounds so context menus near the screen edge are
+	 * repositioned by wlroots to stay on-screen. */
+	if (popup->toplevel && popup->toplevel->workspace && popup->toplevel->workspace->output) {
+		struct uwm_output *output = popup->toplevel->workspace->output;
 		struct wlr_box box = {
 			.x = output->lx,
 			.y = output->ly,
@@ -730,4 +753,16 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 		};
 		wlr_xdg_popup_unconstrain_from_box(xdg_popup, &box);
 	}
+
+	if (popup->toplevel) {
+		wl_list_insert(&popup->toplevel->popups, &popup->link);
+	} else {
+		wl_list_insert(&server->popups, &popup->link);
+	}
+	return;
+
+orphan:
+	wlr_log(WLR_ERROR, "failed to create scene tree for popup, tracking as orphan");
+	popup->toplevel = NULL;
+	wl_list_insert(&server->popups, &popup->link);
 }
