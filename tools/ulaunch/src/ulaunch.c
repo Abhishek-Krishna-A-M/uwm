@@ -222,10 +222,6 @@ int main(int argc, char **argv) {
 
 	/* --- event loop --- */
 	int wl_fd = wl_display_get_fd(state.display);
-	struct pollfd fds[2] = {
-		{ .fd = wl_fd, .events = POLLIN },
-		{ .fd = state.timerfd, .events = POLLIN },
-	};
 
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
@@ -238,9 +234,8 @@ int main(int argc, char **argv) {
 
 		if (wl_display_flush(state.display) < 0) {
 			if (errno == EAGAIN) {
-				fds[0].events = POLLIN | POLLOUT;
-				poll(fds, 2, 100);
-				fds[0].events = POLLIN;
+				struct pollfd pf = { .fd = wl_fd, .events = POLLIN | POLLOUT };
+				poll(&pf, 1, 100);
 				continue;
 			}
 			break;
@@ -249,14 +244,39 @@ int main(int argc, char **argv) {
 		while (wl_display_prepare_read(state.display) != 0)
 			wl_display_dispatch_pending(state.display);
 
-		int ret = poll(fds, 2, -1);
+		struct pollfd fds[3];
+		int nfds = 0, stdin_idx = -1, timer_idx;
+
+		fds[nfds].fd = wl_fd;
+		fds[nfds].events = POLLIN;
+		nfds++;
+
+		if (state.mode == MODE_DMENU && !state.dmenu_stdin_done) {
+			fds[nfds].fd = STDIN_FILENO;
+			fds[nfds].events = POLLIN;
+			stdin_idx = nfds;
+			nfds++;
+		}
+
+		fds[nfds].fd = state.timerfd;
+		fds[nfds].events = POLLIN;
+		timer_idx = nfds;
+		nfds++;
+
+		int ret = poll(fds, nfds, -1);
 		if (ret < 0) {
 			wl_display_cancel_read(state.display);
 			if (errno == EINTR) continue;
 			break;
 		}
 
-		if (fds[1].revents & POLLIN) {
+		if (stdin_idx >= 0 && (fds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+			dmenu_pump();
+			filter_update();
+			state.need_redraw = true;
+		}
+
+		if (fds[timer_idx].revents & POLLIN) {
 			uint64_t exp;
 			read(state.timerfd, &exp, sizeof(exp));
 			input_repeat_fire();

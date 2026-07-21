@@ -1,7 +1,7 @@
 # Maintainer: Abhishek Krishna A M abhishekkrishna2k6@gmail.com
 
 pkgname=('uwm' 'ubar' 'ulaunch')
-pkgver=0.1.0
+pkgver=0.9.1.4.g580fcfe
 pkgrel=1
 pkgdesc="A minimal BSP tiling Wayland compositor built on wlroots"
 arch=('x86_64')

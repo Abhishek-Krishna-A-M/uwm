@@ -88,6 +88,11 @@ typedef struct {
 	int repeat_utf8_len;
 	int repeat_delay_ms;
 	int repeat_rate_ms;
+
+	/* dmenu incremental */
+	char dmenu_buf[4096];
+	int dmenu_buf_len;
+	bool dmenu_stdin_done;
 } State;
 
 uint32_t parse_color(const char *hex);
