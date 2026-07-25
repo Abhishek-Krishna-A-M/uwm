@@ -73,16 +73,20 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		}
 	}
 
-	/* Update display for workspace-level monocle: only the focused
-	 * window should be visible. Callers already handle positioning
-	 * via their own bsp_arrange() call, so we only toggle visibility
-	 * here to avoid redundant full layout recomputation. */
 	if (ws->monocle) {
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
 			if (!tl->floating && !tl->fullscreen)
 				wlr_scene_node_set_enabled(&tl->scene_tree->node,
 					tl == toplevel);
+		}
+		if (ws->output) {
+			struct uwm_output *o = ws->output;
+			int x = o->lx + o->usable_area.x;
+			int y = o->ly + o->usable_area.y;
+			wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
+				o->usable_area.width, o->usable_area.height);
 		}
 	}
 
