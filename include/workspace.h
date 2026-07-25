@@ -46,9 +46,6 @@ void workspace_cycle_next(struct uwm_server *server);
 void workspace_prev(struct uwm_server *server);
 void workspace_next(struct uwm_server *server);
 
-/* Current workspace on the focused output */
-struct uwm_workspace *workspace_current(struct uwm_server *server);
-
 /* Output-derived helpers */
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,
 	struct uwm_output *output);
