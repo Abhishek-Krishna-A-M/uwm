@@ -13,6 +13,7 @@
 #include <wlr/backend/libinput.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include "input.h"
+#include "gesture.h"
 #include "config.h"
 #include "window.h"
 #include "bsp.h"
@@ -86,9 +87,7 @@ static struct uwm_server *uwm_server;
 /* ========== Workspace/arrangement helpers ========== */
 static struct uwm_workspace *current_ws(void)
 {
-	if (uwm_server->active_output && uwm_server->active_output->current_workspace < UWM_WORKSPACE_COUNT)
-		return &uwm_server->workspaces.workspaces[uwm_server->active_output->current_workspace];
-	return &uwm_server->workspaces.workspaces[uwm_server->workspaces.current];
+	return workspace_current(uwm_server);
 }
 
 static void bsp_arrange_current_workspace(void)
@@ -869,7 +868,8 @@ void server_cursor_frame(struct wl_listener *listener, void *data) {
 void server_cursor_swipe_begin(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_begin);
 	struct wlr_pointer_swipe_begin_event *event = data;
-	if (server->pointer_gestures)
+	bool consumed = gesture_swipe_begin(&server->gesture, event->fingers);
+	if (server->pointer_gestures && !consumed)
 		wlr_pointer_gestures_v1_send_swipe_begin(
 			server->pointer_gestures, server->seat,
 			event->time_msec, event->fingers);
@@ -878,7 +878,8 @@ void server_cursor_swipe_begin(struct wl_listener *listener, void *data) {
 void server_cursor_swipe_update(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_update);
 	struct wlr_pointer_swipe_update_event *event = data;
-	if (server->pointer_gestures)
+	gesture_swipe_update(&server->gesture, event->dx, event->dy);
+	if (server->pointer_gestures && !server->gesture.active)
 		wlr_pointer_gestures_v1_send_swipe_update(
 			server->pointer_gestures, server->seat,
 			event->time_msec, event->dx, event->dy);
@@ -887,7 +888,8 @@ void server_cursor_swipe_update(struct wl_listener *listener, void *data) {
 void server_cursor_swipe_end(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, cursor_swipe_end);
 	struct wlr_pointer_swipe_end_event *event = data;
-	if (server->pointer_gestures)
+	bool consumed = gesture_swipe_end(&server->gesture, server, event->cancelled);
+	if (server->pointer_gestures && !consumed)
 		wlr_pointer_gestures_v1_send_swipe_end(
 			server->pointer_gestures, server->seat,
 			event->time_msec, event->cancelled);

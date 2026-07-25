@@ -311,6 +311,15 @@ void workspace_next(struct uwm_server *server)
 	workspace_switch(server, next);
 }
 
+struct uwm_workspace *workspace_current(struct uwm_server *server)
+{
+	if (server->active_output
+			&& server->active_output->current_workspace < UWM_WORKSPACE_COUNT)
+		return &server->workspaces.workspaces[
+			server->active_output->current_workspace];
+	return &server->workspaces.workspaces[server->workspaces.current];
+}
+
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,
 		struct uwm_output *output)
 {

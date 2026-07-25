@@ -29,6 +29,7 @@
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
+#include "gesture.h"
 #include "config.h"
 #include "workspace.h"
 #include "layer_shell.h"
@@ -113,6 +114,7 @@ struct uwm_server {
 	struct wl_listener renderer_lost;
 	struct wl_listener session_active;
 	bool locked;                              /* session lock active */
+	struct uwm_gesture gesture;               /* touchpad gesture state */
 
 	/* Layer shell support */
 	struct uwm_layer_shell layer_shell;
