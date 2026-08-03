@@ -6,15 +6,19 @@
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      eachSystem = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
 
-      # Every pc file referenced (transitively) by wlroots-0.20.pc, so that the
-      # Makefile's `pkg-config --cflags wlroots-0.20 ...` invocation can never
-      # fail with "Package not found" inside the Nix build sandbox.
+      version =
+        "0.9.1"
+        + nixpkgs.lib.optionalString (self ? shortRev && self.shortRev != null) "+git.${self.shortRev}";
+
+      # wlroots-0.20.pc references these through Requires.private. The root
+      # Makefile runs `pkg-config --cflags wlroots-0.20 ...`, which follows
+      # Requires.private, so every one of these .pc files must be findable in
+      # the build. libinput is omitted: wlroots already propagates it.
       wlrootsPcDeps = pkgs: with pkgs; [
         wayland # wayland-server.pc, wayland-client.pc
         wayland-protocols # wayland-protocols.pc
-        libinput # libinput.pc (propagated by wlroots anyway)
         libxkbcommon # xkbcommon.pc
         pixman # pixman-1.pc
         libdrm # libdrm.pc
@@ -23,240 +27,165 @@
         vulkan-loader # vulkan.pc
         lcms2 # lcms2.pc
         systemdLibs # libudev.pc
-        seatd # libseat.pc (+ seatd daemon)
+        seatd # libseat.pc
         libdisplay-info # libdisplay-info.pc
         libliftoff # libliftoff.pc
-        libxcb # xcb.pc, xcb-render.pc, xcb-shm.pc, xcb-dri3.pc, xcb-present.pc, xcb-xfixes.pc, xcb-xinput.pc, xcb-composite.pc
+        libxcb # xcb.pc, xcb-dri3.pc, xcb-present.pc, xcb-render.pc, xcb-shm.pc, xcb-xfixes.pc, xcb-xinput.pc, xcb-composite.pc
         libxcb-render-util # xcb-renderutil.pc
         libxcb-wm # xcb-ewmh.pc, xcb-icccm.pc, xcb-res.pc
         libxcb-errors # xcb-errors.pc
       ];
+
+      commonMeta = pkgs: pname: description: {
+        inherit description;
+        homepage = "https://github.com/Abhishek-Krishna-A-M/uwm";
+        license = pkgs.lib.licenses.mit;
+        mainProgram = pname;
+        platforms = pkgs.lib.platforms.linux;
+      };
+
+      mkApp = program: {
+        type = "app";
+        inherit program;
+      };
+
+      # Shared packaging for the companion tools. Both build with plain make,
+      # hardcode the system path to xdg-shell.xml, and assemble their CFLAGS
+      # via `CFLAGS +=`, which a command-line value would discard.
+      mkTool = pkgs: { pname, src, extraBuildInputs, installPhase, description }:
+        pkgs.stdenv.mkDerivation {
+          inherit pname version src;
+
+          nativeBuildInputs = [ pkgs.gnumake pkgs.pkg-config pkgs.wayland pkgs.wayland-scanner ];
+          buildInputs = [ pkgs.wayland pkgs.wayland-protocols pkgs.cairo pkgs.pango ] ++ extraBuildInputs;
+
+          preBuild = ''
+            substituteInPlace Makefile \
+              --replace-fail "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml" \
+              "${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
+          '';
+
+          # Export CFLAGS so the Makefiles' `CFLAGS +=` lines still apply; this
+          # also drops their -march=native. `make clean` guarantees a
+          # from-scratch build even if a host-built binary leaked into the
+          # source.
+          buildPhase = ''
+            runHook preBuild
+            export CFLAGS="-O3 -DNDEBUG -Wall -Wextra -pedantic"
+            make clean
+            make
+            runHook postBuild
+          '';
+
+          inherit installPhase;
+
+          meta = commonMeta pkgs pname description;
+        };
     in
     {
-      packages = forAllSystems (pkgs:
+      packages = eachSystem (system: pkgs: rec {
+        uwm = pkgs.stdenv.mkDerivation {
+          pname = "uwm";
+          inherit version;
+          src = ./.;
+
+          nativeBuildInputs = [ pkgs.gnumake pkgs.pkg-config ];
+          buildInputs = [ pkgs.wlroots_0_20 ] ++ wlrootsPcDeps pkgs;
+
+          enableParallelBuilding = true;
+
+          # CFLAGS is passed on the command line so it replaces the Makefile's
+          # -march=native while keeping -O2 -DNDEBUG. The -Wno-error flags
+          # silence FORTIFY 3 diagnostics (format-truncation, unused-result)
+          # that would otherwise trip the Makefile's -Werror.
+          buildPhase = ''
+            runHook preBuild
+            make CC="$CC" CFLAGS="-O2 -DNDEBUG -Wno-error=format-truncation -Wno-error=unused-result" LDFLAGS="$LDFLAGS"
+            runHook postBuild
+          '';
+
+          # The root Makefile has no install target; mirror the PKGBUILD layout.
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 uwm "$out/bin/uwm"
+            install -Dm644 uwm.desktop "$out/share/wayland-sessions/uwm.desktop"
+            runHook postInstall
+          '';
+
+          meta = commonMeta pkgs "uwm" "A minimal BSP tiling Wayland compositor built on wlroots";
+        };
+
+        default = uwm;
+
+        ubar = mkTool pkgs {
+          pname = "ubar";
+          src = ./tools/ubar;
+          extraBuildInputs = [ pkgs.pulseaudio pkgs.pipewire pkgs.systemdLibs ];
+          description = "Status bar for the UWM Wayland compositor";
+          # ubar's Makefile has no install target; install manually.
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 ubar "$out/bin/ubar"
+            runHook postInstall
+          '';
+        };
+
+        ulaunch = mkTool pkgs {
+          pname = "ulaunch";
+          src = ./tools/ulaunch;
+          extraBuildInputs = [ pkgs.libxkbcommon ];
+          description = "Application launcher for the UWM Wayland compositor";
+          # ulaunch's Makefile has a real install target honouring PREFIX.
+          installPhase = ''
+            runHook preInstall
+            make install PREFIX="$out"
+            runHook postInstall
+          '';
+        };
+      });
+
+      apps = eachSystem (system: pkgs:
         let
-          lib = pkgs.lib;
-          stdenv = pkgs.stdenv;
-          wlroots = pkgs.wlroots_0_20;
-          version =
-            "0.9.1"
-            + lib.optionalString (self ? shortRev && self.shortRev != null) "+git.${self.shortRev}";
+          pkg = pname: self.packages.${system}.${pname};
         in
         rec {
-          default = stdenv.mkDerivation {            pname = "uwm";
-            inherit version;
-            src = ./.;
-
-            nativeBuildInputs = with pkgs; [ gnumake pkg-config ];
-            buildInputs = [ wlroots ] ++ wlrootsPcDeps pkgs;
-
-            enableParallelBuilding = true;
-
-            # CFLAGS is passed on the make command line so it overrides the
-            # Makefile's non-reproducible "-march=native" while keeping its
-            # intended -O2 -DNDEBUG. Nix's hardening flags reach the compiler
-            # through the cc-wrapper's NIX_CFLAGS_COMPILE environment variable.
-            # -Wno-error=format-truncation, -Wno-error=unused-result: Nix's
-            # fortified glibc (FORTIFY 3) emits -Wformat-truncation /
-            # -Wunused-result diagnostics (snprintf into path[128], unchecked
-            # write()/fscanf() in cleanup paths) that the Makefile's -Werror
-            # turns into errors on this toolchain. The user's toolchain
-            # (no fortify) never sees them.
-            buildPhase = ''
-              runHook preBuild
-              make CC="$CC" CFLAGS="-O2 -DNDEBUG -Wno-error=format-truncation -Wno-error=unused-result" LDFLAGS="$LDFLAGS"
-              runHook postBuild
-            '';
-
-            # The root Makefile has no install target; mirror the PKGBUILD layout.
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 uwm "$out/bin/uwm"
-              install -Dm644 uwm.desktop "$out/share/wayland-sessions/uwm.desktop"
-              runHook postInstall
-            '';
-
-            meta = {
-              description = "A minimal BSP tiling Wayland compositor built on wlroots";
-              homepage = "https://github.com/Abhishek-Krishna-A-M/uwm";
-              license = lib.licenses.mit;
-              mainProgram = "uwm";
-              platforms = lib.platforms.linux;
-            };
-          };
-
-          # Convenience alias so `nix build .#uwm` works like `nix run .#uwm`.
-          uwm = default;
-
-          ubar = stdenv.mkDerivation {
-            pname = "ubar";
-            inherit version;
-            src = ./tools/ubar;
-
-            # wayland-scanner is a separate package in this nixpkgs; wayland's
-            # own outputs (out/dev) do not ship the scanner binary.
-            nativeBuildInputs = with pkgs; [ gnumake pkg-config wayland wayland-scanner ];
-            buildInputs = with pkgs; [
-              wayland
-              wayland-protocols
-              cairo
-              pango
-              pulseaudio # libpulse.pc
-              pipewire # libpipewire-0.3.pc
-              systemdLibs # libudev.pc
-            ];
-
-            # The Makefile hardcodes /usr/share/wayland-protocols, which does
-            # not exist in the Nix sandbox; point it at the store instead.
-            preBuild = ''
-              substituteInPlace Makefile \
-                --replace-fail "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml" \
-                "${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
-            '';
-
-            # The tools' Makefiles assemble their flags via `CFLAGS += ...`,
-            # which is suppressed for command-line-set CFLAGS, so export it in
-            # the environment instead (the `?=` in their Makefiles honours it).
-            # `make clean` first: tools/ubar is a nested git repo, so its
-            # host-built ubar binary is invisible to the parent repo's git
-            # status and ends up in the flake source; make would consider it
-            # up-to-date and never compile, shipping the host binary (linked
-            # against /lib64/ld-linux) instead.
-            buildPhase = ''
-              runHook preBuild
-              export CFLAGS="-O3 -DNDEBUG -Wall -Wextra -pedantic"
-              make clean
-              make
-              runHook postBuild
-            '';
-
-            # ubar's Makefile has no install target; install manually.
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 ubar "$out/bin/ubar"
-              runHook postInstall
-            '';
-
-            meta = {
-              description = "Status bar for the UWM Wayland compositor";
-              license = lib.licenses.mit;
-              mainProgram = "ubar";
-              platforms = lib.platforms.linux;
-            };
-          };
-
-          ulaunch = stdenv.mkDerivation {
-            pname = "ulaunch";
-            inherit version;
-            src = ./tools/ulaunch;
-
-            # wayland-scanner is a separate package in this nixpkgs; wayland's
-            # own outputs (out/dev) do not ship the scanner binary.
-            nativeBuildInputs = with pkgs; [ gnumake pkg-config wayland wayland-scanner ];
-            buildInputs = with pkgs; [
-              wayland
-              wayland-protocols
-              cairo
-              pango
-              libxkbcommon
-            ];
-
-            preBuild = ''
-              substituteInPlace Makefile \
-                --replace-fail "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml" \
-                "${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
-            '';
-
-            # Same `CFLAGS +=` caveat as ubar: export in the environment.
-            # `make clean` is defensive only: ulaunch's binary is already
-            # gitignored, but cleaning guarantees a from-scratch build.
-            buildPhase = ''
-              runHook preBuild
-              export CFLAGS="-O3 -DNDEBUG -Wall -Wextra -pedantic"
-              make clean
-              make
-              runHook postBuild
-            '';
-
-            # ulaunch's Makefile has a real install target honouring PREFIX.
-            installPhase = ''
-              runHook preInstall
-              make install PREFIX="$out"
-              runHook postInstall
-            '';
-
-            meta = {
-              description = "Application launcher for the UWM Wayland compositor";
-              license = lib.licenses.mit;
-              mainProgram = "ulaunch";
-              platforms = lib.platforms.linux;
-            };
-          };
+          uwm = mkApp "${pkg "uwm"}/bin/uwm";
+          default = uwm;
+          ubar = mkApp "${pkg "ubar"}/bin/ubar";
+          ulaunch = mkApp "${pkg "ulaunch"}/bin/ulaunch";
         });
 
-      apps = forAllSystems (pkgs:
-        let
-          packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-        in
-        {
-          default = {
-            type = "app";
-            program = "${packages.default}/bin/uwm";
-          };
-
-          uwm = {
-            type = "app";
-            program = "${packages.default}/bin/uwm";
-          };
-
-          ubar = {
-            type = "app";
-            program = "${packages.ubar}/bin/ubar";
-          };
-
-          ulaunch = {
-            type = "app";
-            program = "${packages.ulaunch}/bin/ulaunch";
-          };
-        });
-
-      devShells = forAllSystems (pkgs: {
+      devShells = eachSystem (system: pkgs: {
         default = pkgs.mkShell {
           name = "uwm-dev-shell";
 
-          # Nix's glibc enables FORTIFY_SOURCE=3, whose warn_unused_result /
-          # format-truncation diagnostics trip the Makefile's -Werror; the
-          # user's system glibc (no fortify) never sees them. Match the
-          # user's toolchain in the dev shell; packages keep full hardening.
+          # Nix's fortified glibc (FORTIFY 3) emits -Wformat-truncation /
+          # -Wunused-result diagnostics that trip the Makefile's -Werror; the
+          # user's system glibc never sees them.
           NIX_HARDENING_ENABLE = "all -fortify3";
 
-          # Pull in every compile-time dependency of the compositor and its
-          # companion tools (nativeBuildInputs and buildInputs of each).
-          inputsFrom = with self.packages.${pkgs.stdenv.hostPlatform.system}; [
-            default
-            ubar
-            ulaunch
-          ];
+          # All compile-time and runtime libraries of the compositor and tools.
+          inputsFrom = with self.packages.${system}; [ uwm ubar ulaunch ];
 
-          # The shell's default `cc` comes from its stdenv (gcc), matching the
-          # user's system toolchain. Raw gcc/clang are intentionally absent:
-          # pkgs.clang ships a `cc` symlink that would hijack the Makefile's
-          # $(CC) and fail its -Werror on clang-only diagnostics.
+          # gcc comes first so `cc` resolves to gcc; clang stays available
+          # through `make CC=clang`.
           nativeBuildInputs = with pkgs; [
-            gnumake
-            pkg-config
-            git
+            gcc
+            clang
             gdb
             bear
             valgrind
+            pkg-config
+            wayland-scanner
             clang-tools
+            git
             nixpkgs-fmt
           ];
 
-          # Runtime companions needed to actually run and test the compositor.
+          # Programs the compositor spawns at runtime (see config.h) and
+          # helpers for testing a Wayland session.
           buildInputs = with pkgs; [
             swaybg
-            mako
             foot
             fuzzel
             grim
@@ -277,17 +206,16 @@
         };
       });
 
-      checks = forAllSystems (pkgs: {
-        build = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-        ubar = self.packages.${pkgs.stdenv.hostPlatform.system}.ubar;
-        ulaunch = self.packages.${pkgs.stdenv.hostPlatform.system}.ulaunch;
-      });
+      formatter = eachSystem (system: pkgs: pkgs.nixpkgs-fmt);
 
-      formatter = forAllSystems (pkgs: pkgs.nixpkgs-fmt);
+      checks = eachSystem (system: pkgs:
+        with self.packages.${system}; {
+          inherit uwm ubar ulaunch;
+        });
 
       nixosModules.default = { pkgs, ... }: {
         environment.systemPackages = with self.packages.${pkgs.stdenv.hostPlatform.system}; [
-          default
+          uwm
           ubar
           ulaunch
         ];
