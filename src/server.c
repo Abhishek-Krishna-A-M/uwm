@@ -291,6 +291,20 @@ static void handle_output_manager_test(struct wl_listener *listener, void *data)
 		wlr_output_configuration_v1_send_failed(config);
 }
 
+/* Destroy the session after removing our listeners from
+ * session->events.active. wlroots 0.20 asserts that the listener list is
+ * empty in wlr_session_destroy(), so every error path must unlink both
+ * listeners before tearing the session down. */
+static void uwm_session_destroy(struct uwm_server *server) {
+	if (!server->session) {
+		return;
+	}
+	wl_list_remove(&g_session_active_sentinel.link);
+	wl_list_remove(&server->session_active.link);
+	wlr_session_destroy(server->session);
+	server->session = NULL;
+}
+
 bool server_init(struct uwm_server *server) {
 	/* Set up signal handling with SA_RESTART to prevent signals from
 	 * interrupting blocking syscalls (crucial during VT switch).
@@ -365,8 +379,7 @@ bool server_init(struct uwm_server *server) {
 	if (server->renderer == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_renderer");
 		wlr_backend_destroy(server->backend);
-		if (server->session)
-			wlr_session_destroy(server->session);
+		uwm_session_destroy(server);
 		wl_display_destroy(server->wl_display);
 		return false;
 	}
@@ -390,8 +403,7 @@ bool server_init(struct uwm_server *server) {
 		wl_list_remove(&server->renderer_lost.link);
 		wlr_renderer_destroy(server->renderer);
 		wlr_backend_destroy(server->backend);
-		if (server->session)
-			wlr_session_destroy(server->session);
+		uwm_session_destroy(server);
 		wl_display_destroy(server->wl_display);
 		return false;
 	}
@@ -744,8 +756,7 @@ err:
 		wlr_renderer_destroy(server->renderer);
 	if (server->backend)
 		wlr_backend_destroy(server->backend);
-	if (server->session)
-		wlr_session_destroy(server->session);
+	uwm_session_destroy(server);
 	wl_display_destroy(server->wl_display);
 	return false;
 }

@@ -187,8 +187,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!wlr_backend_start(server.backend)) {
-		wlr_backend_destroy(server.backend);
-		wl_display_destroy(server.wl_display);
+		server_finish(&server);
 		return 1;
 	}
 
