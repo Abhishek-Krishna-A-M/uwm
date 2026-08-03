@@ -110,4 +110,5 @@ config.h
 # Build binaries
 /uwm
 /tools/ulaunch/ulaunch
+/tools/ubar/ubar
 
