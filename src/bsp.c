@@ -140,8 +140,7 @@ static void bsp_arrange_node_full(
 	if (node->first == NULL) {
 		if (node->toplevel && !node->toplevel->floating
 			&& !node->toplevel->fullscreen) {
-			if (!node->toplevel->workspace->monocle
-					|| node->toplevel != node->toplevel->workspace->focused)
+			if (!node->toplevel->workspace->monocle)
 				bsp_node_apply_geometry(node);
 		}
 		return;
@@ -165,8 +164,7 @@ static void bsp_arrange_node(
 	if (node->first == NULL) {
 		if (node->toplevel && !node->toplevel->floating
 			&& !node->toplevel->fullscreen) {
-			if (!node->toplevel->workspace->monocle
-					|| node->toplevel != node->toplevel->workspace->focused)
+			if (!node->toplevel->workspace->monocle)
 				bsp_node_apply_geometry(node);
 		}
 		return;
@@ -235,17 +233,48 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 
 	if (workspace->monocle && workspace->focused) {
 		struct uwm_toplevel *tl;
+		int tiled = 0;
 		wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
-			if (tl != workspace->focused && !tl->floating && !tl->fullscreen)
-				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
+			if (!tl->floating && !tl->fullscreen)
+				tiled++;
 		}
-		bsp_arrange_node(workspace->root, x, y, width, height, gap);
-		wlr_scene_node_set_position(
-			&workspace->focused->scene_tree->node, x, y);
-		wlr_xdg_toplevel_set_size(
-			workspace->focused->xdg_toplevel, width, height);
-		wlr_scene_node_set_enabled(
-			&workspace->focused->scene_tree->node, true);
+
+		if (tiled > workspace->output->server->config.monocle_presave_max_windows) {
+			/* High window count: avoid a large configure burst. Only the
+			 * focused window is sized; others are sized lazily on focus. */
+			wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
+				if (tl != workspace->focused && !tl->floating
+						&& !tl->fullscreen)
+					wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
+			}
+			bsp_arrange_node(workspace->root, x, y, width, height, gap);
+			wlr_scene_node_set_position(
+				&workspace->focused->scene_tree->node, x, y);
+			if (workspace->focused->xdg_toplevel->base->current.geometry.width
+					!= width
+					|| workspace->focused->xdg_toplevel->base->current.geometry.height
+					!= height)
+				wlr_xdg_toplevel_set_size(
+					workspace->focused->xdg_toplevel, width, height);
+			wlr_scene_node_set_enabled(
+				&workspace->focused->scene_tree->node, true);
+		} else {
+			/* Pre-save every tiled window to the full area at once so
+			 * cycling focus is a pure scene visibility/position swap. */
+			wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
+				if (tl->floating || tl->fullscreen)
+					continue;
+				wlr_scene_node_set_position(&tl->scene_tree->node, x, y);
+				if (tl->xdg_toplevel->base->current.geometry.width != width
+						|| tl->xdg_toplevel->base->current.geometry.height != height)
+					wlr_xdg_toplevel_set_size(tl->xdg_toplevel, width, height);
+				wlr_scene_node_set_enabled(&tl->scene_tree->node,
+					tl == workspace->focused);
+			}
+			bsp_arrange_node(workspace->root, x, y, width, height, gap);
+			wlr_scene_node_set_enabled(
+				&workspace->focused->scene_tree->node, true);
+		}
 	} else {
 		bsp_arrange_node(workspace->root, x, y, width, height, gap);
 	}

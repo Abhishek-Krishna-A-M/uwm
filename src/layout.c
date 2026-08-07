@@ -54,8 +54,9 @@ void toggle_monocle(struct uwm_workspace *workspace)
 		workspace->monocle = false;
 
 		if (workspace->root)
+			bsp_arrange_workspace(workspace);
+		if (workspace->root)
 			set_children_visible(workspace->root, true);
-		bsp_arrange_workspace(workspace);
 	} else {
 		workspace->monocle = true;
 		if (!workspace->root)

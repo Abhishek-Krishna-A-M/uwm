@@ -88,7 +88,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			int w = o->usable_area.width - 2 * ogap;
 			int h = o->usable_area.height - 2 * ogap;
 			wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
-			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+			if (toplevel->xdg_toplevel->base->current.geometry.width != w
+					|| toplevel->xdg_toplevel->base->current.geometry.height != h)
+				wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
 		}
 	}
 
@@ -118,7 +120,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
 
-	/* Warp cursor to center of window if not already inside.
+	/* Warp cursor to center of window if not already inside, then update
+	 * pointer focus so scroll events go to the newly focused window without
+	 * requiring mouse motion. When the cursor is already inside the window,
+	 * pointer focus already tracks it (real motion keeps it current), so skip
+	 * the scene lookup and enter re-delivery.
 	 * Skip during interactive move/resize to avoid fighting the user. */
 	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
 		struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
@@ -126,28 +132,29 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 		double wy = toplevel->scene_tree->node.y + geo.y;
 		double ww = geo.width;
 		double wh = geo.height;
-		if (ww > 0 && wh > 0 &&
-				(server->cursor->x < wx || server->cursor->x >= wx + ww ||
-				 server->cursor->y < wy || server->cursor->y >= wy + wh)) {
-			wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
-		}
+		bool inside = ww > 0 && wh > 0 &&
+			server->cursor->x >= wx && server->cursor->x < wx + ww &&
+			server->cursor->y >= wy && server->cursor->y < wy + wh;
+		if (!inside) {
+			if (ww > 0 && wh > 0) {
+				wlr_cursor_warp(server->cursor, NULL,
+					wx + ww / 2.0, wy + wh / 2.0);
+			}
 
-		/* Update pointer focus after cursor warp so scroll events
-		 * go to the newly focused window without requiring mouse motion. */
-		double sx, sy;
-		struct wlr_surface *surface = NULL;
-		desktop_toplevel_at(server, server->cursor->x, server->cursor->y,
-			&surface, &sx, &sy);
-		if (surface) {
-			wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+			double sx, sy;
+			struct wlr_surface *surface = NULL;
+			desktop_toplevel_at(server, server->cursor->x, server->cursor->y,
+				&surface, &sx, &sy);
+			if (surface) {
+				wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+			}
 		}
 	}
 
-	/* Notify bar clients about title change.
+	/* Notify bar clients about focus change.
 	 * Skip during move/resize to batch updates. */
-	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH
-			&& server->bar_manager && server->active_output) {
-		uwm_bar_send_output(server->active_output);
+	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
+		uwm_bar_notify_focus(server, toplevel);
 	}
 }
 
@@ -450,8 +457,8 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 		if (tiled_count <= 1) {
 			ws->monocle = false;
 			if (ws->root) {
-				set_children_visible(ws->root, true);
 				bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
+				set_children_visible(ws->root, true);
 			}
 		} else if (focus_was_displaced && ws->focused) {
 			bsp_arrange_workspace(ws);

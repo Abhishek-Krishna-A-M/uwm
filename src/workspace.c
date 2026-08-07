@@ -203,8 +203,11 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 			}
 			if (count <= 1) {
 				old_ws->monocle = false;
-				if (old_ws->root)
+				if (old_ws->root) {
+					workspace_arrange_on_output(old_ws, old_ws->output,
+						toplevel->server->config.inner_gap);
 					set_children_visible(old_ws->root, true);
+				}
 			}
 		}
 	}
@@ -287,14 +290,6 @@ void workspace_cycle_next(struct uwm_server *server)
 
 	int next = (idx + 1) % count;
 	focus_toplevel(windows[next]);
-
-	if (ws->monocle && ws->output) {
-		bsp_arrange(ws, ws->output->lx + ws->output->usable_area.x,
-			ws->output->ly + ws->output->usable_area.y,
-			ws->output->usable_area.width,
-			ws->output->usable_area.height,
-			server->config.inner_gap);
-	}
 }
 
 void workspace_prev(struct uwm_server *server)

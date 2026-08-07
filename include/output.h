@@ -30,6 +30,10 @@ struct uwm_output {
 	int lx, ly;
 	uint32_t current_workspace;              /* workspace displayed on this output */
 
+	/* Bar report dedup — last identity reported to the bar for this output */
+	struct uwm_toplevel *bar_focused_toplevel;
+	uint32_t bar_focused_ws;
+
 	/* Session lock surface (NULL when not locked) */
 	struct wlr_session_lock_surface_v1 *lock_surface;
 	struct wl_listener lock_surface_destroy;

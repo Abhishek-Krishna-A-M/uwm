@@ -69,6 +69,7 @@ void config_load(struct uwm_config *config)
 		.pointer_speed = POINTER_SPEED,
 		.inner_gap = INNER_GAP,
 		.outer_gap = OUTER_GAP,
+		.monocle_presave_max_windows = MONOCLE_PRESAVE_MAX_WINDOWS,
 		.rule_count = 0,
 	};
 

@@ -13,6 +13,11 @@
 #define INNER_GAP 5
 #define OUTER_GAP 5
 
+/* When a monocle workspace has more tiled windows than this, fall back to
+ * lazy sizing (only the focused window is sized per focus change) instead of
+ * pre-saving every hidden window on entry. Bounds the configure burst. */
+#define MONOCLE_PRESAVE_MAX_WINDOWS 8
+
 /* input */
 #define FOCUS_FOLLOWS_POINTER true
 #define KEY_REPEAT_DELAY 250

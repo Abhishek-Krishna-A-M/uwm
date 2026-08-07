@@ -120,8 +120,11 @@ void toggle_floating(struct uwm_toplevel *window)
 			}
 			if (count <= 1) {
 				ws->monocle = false;
-				if (ws->root)
+				if (ws->root) {
+					bsp_arrange(ws, out_x, out_y, out_w, out_h,
+						window->server->config.inner_gap);
 					set_children_visible(ws->root, true);
+				}
 			}
 		}
 	} else {

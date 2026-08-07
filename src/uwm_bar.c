@@ -246,3 +246,26 @@ void uwm_bar_send_output(struct uwm_output *output)
 			bar_send_idle_handler, server);
 	}
 }
+
+void uwm_bar_notify_focus(struct uwm_server *server,
+		struct uwm_toplevel *toplevel)
+{
+	if (!server || !server->bar_manager || !toplevel || !toplevel->workspace)
+		return;
+
+	struct uwm_output *output = toplevel->workspace->output;
+	if (!output)
+		return;
+
+	/* Only the active workspace's focused window (title/app_id) and the
+	 * per-workspace occupancy feed the bar. If the identity hasn't changed,
+	 * skip scheduling a resend entirely — the existing idle debounce
+	 * already coalesces multiple changes within one frame. */
+	if (output->bar_focused_toplevel == toplevel
+			&& output->bar_focused_ws == output->current_workspace)
+		return;
+
+	output->bar_focused_toplevel = toplevel;
+	output->bar_focused_ws = output->current_workspace;
+	uwm_bar_send_output(output);
+}
