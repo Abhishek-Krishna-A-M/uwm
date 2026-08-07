@@ -256,10 +256,6 @@ uwm/
 │   ├── wlr-layer-shell-unstable-v1-protocol.c
 │   └── uwm-bar-unstable-v1-protocol.c
 ├── docs/                   # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── KEYBINDS.md
-│   ├── ROADMAP.md
-│   └── SCREEN_SHARING_PLAN.md
 ├── config.def.h            # Default configuration
 ├── Makefile                # Build system
 └── startup.sh              # Startup script
@@ -275,8 +271,8 @@ UWM is designed for minimal resource usage:
 
 ## Inspirations
 
-- **bspwm**: BSP tiling model, keyboard-driven philosophy, compile-time configuration
-- **dwl**: wlroots-based compositor design, minimal architecture
+- **bspwm**: BSP tiling model, keyboard-driven philosophy
+- **dwl**: wlroots-based compositor design, minimal architecture, compile-time configuration
 - **wlroots**: Wayland compositor library providing the rendering and protocol foundation
 
 UWM does not claim compatibility with any of these projects. It is an independent compositor that borrows design principles.
