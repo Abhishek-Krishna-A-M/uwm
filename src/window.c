@@ -80,13 +80,15 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 				wlr_scene_node_set_enabled(&tl->scene_tree->node,
 					tl == toplevel);
 		}
-		if (ws->output) {
+	if (ws->output) {
 			struct uwm_output *o = ws->output;
-			int x = o->lx + o->usable_area.x;
-			int y = o->ly + o->usable_area.y;
+			int ogap = o->server->config.outer_gap;
+			int x = o->lx + o->usable_area.x + ogap;
+			int y = o->ly + o->usable_area.y + ogap;
+			int w = o->usable_area.width - 2 * ogap;
+			int h = o->usable_area.height - 2 * ogap;
 			wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
-			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
-				o->usable_area.width, o->usable_area.height);
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
 		}
 	}
 

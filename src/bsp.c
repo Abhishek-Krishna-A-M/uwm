@@ -224,6 +224,12 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 	if (!workspace->output)
 		return;
 
+	int ogap = workspace->output->server->config.outer_gap;
+	x += ogap;
+	y += ogap;
+	width -= 2*ogap;
+	height -= 2*ogap;
+
 	if (width < 1) width = 1;
 	if (height < 1) height = 1;
 

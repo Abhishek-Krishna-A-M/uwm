@@ -11,6 +11,7 @@
 #define FLOATING_CREATE_MIN_WIDTH 200
 #define FLOATING_CREATE_MIN_HEIGHT 150
 #define INNER_GAP 5
+#define OUTER_GAP 5
 
 /* input */
 #define FOCUS_FOLLOWS_POINTER true

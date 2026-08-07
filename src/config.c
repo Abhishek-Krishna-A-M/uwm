@@ -68,6 +68,7 @@ void config_load(struct uwm_config *config)
 		.accel_profile = ACCEL_PROFILE,
 		.pointer_speed = POINTER_SPEED,
 		.inner_gap = INNER_GAP,
+		.outer_gap = OUTER_GAP,
 		.rule_count = 0,
 	};
 
