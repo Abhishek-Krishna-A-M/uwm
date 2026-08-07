@@ -180,6 +180,9 @@
             clang-tools
             git
             nixpkgs-fmt
+            mesa
+            mesa-demos
+            libglvnd
           ];
 
           # Programs the compositor spawns at runtime (see config.h) and
@@ -200,9 +203,27 @@
             xdg-desktop-portal-wlr
           ];
 
-          shellHook = ''
-            echo "UWM dev shell: make (ASAN=1 for the sanitizer build) | make -C tools/ubar | make -C tools/ulaunch"
-          '';
+shellHook = ''
+  export LIBGL_DRIVERS_PATH="${pkgs.mesa.drivers}/lib/dri"
+  export GBM_BACKENDS_PATH="${pkgs.mesa.drivers}/lib/gbm"
+
+  export XDG_DATA_DIRS="${pkgs.wayland-protocols}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
+
+  echo
+  echo "=========================================="
+  echo " UWM Development Shell"
+  echo "=========================================="
+  echo
+  echo "Build:"
+  echo "  make"
+  echo "  make ASAN=1"
+  echo
+  echo "Debug:"
+  echo "  glxinfo -B"
+  echo "  eglinfo"
+  echo "  WAYLAND_DEBUG=1 ./uwm"
+  echo
+'';
         };
       });
 
