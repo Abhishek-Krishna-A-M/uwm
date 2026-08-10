@@ -355,6 +355,17 @@ void server_new_output(struct wl_listener *listener, void *data) {
 		wl_list_remove(&output->request_state.link);
 		wl_list_remove(&output->destroy.link);
 		wl_list_remove(&output->link);
+
+		/* Release resources created earlier in this function */
+		wlr_output_layout_remove(server->output_layout, wlr_output);
+		wlr_scene_node_destroy(&output->layer_background->node);
+		wlr_scene_node_destroy(&output->layer_bottom->node);
+		wlr_scene_node_destroy(&output->layer_floating->node);
+		wlr_scene_node_destroy(&output->layer_top->node);
+		wlr_scene_node_destroy(&output->layer_overlay->node);
+		wlr_scene_node_destroy(&output->layer_lock->node);
+		wlr_output->data = NULL;
+
 		free(output);
 		return;
 	}

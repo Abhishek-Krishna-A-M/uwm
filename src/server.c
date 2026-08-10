@@ -167,6 +167,7 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 			wlr_log(WLR_ERROR, "output %s: test failed", wlr_output->name);
 			wlr_output_configuration_v1_send_failed(config);
 			wlr_output_state_finish(&state);
+			wlr_output_configuration_v1_destroy(config);
 			return;
 		}
 
@@ -174,6 +175,7 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 			wlr_log(WLR_ERROR, "output %s: commit failed", wlr_output->name);
 			wlr_output_configuration_v1_send_failed(config);
 			wlr_output_state_finish(&state);
+			wlr_output_configuration_v1_destroy(config);
 			return;
 		}
 		wlr_output_state_finish(&state);
@@ -242,8 +244,8 @@ static void handle_output_manager_apply(struct wl_listener *listener, void *data
 			config_head->state.x, config_head->state.y);
 	}
 
-	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
 	wlr_output_configuration_v1_send_succeeded(config);
+	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
 }
 
 static void handle_cursor_shape_request(struct wl_listener *listener, void *data) {
@@ -289,6 +291,7 @@ static void handle_output_manager_test(struct wl_listener *listener, void *data)
 		wlr_output_configuration_v1_send_succeeded(config);
 	else
 		wlr_output_configuration_v1_send_failed(config);
+	wlr_output_configuration_v1_destroy(config);
 }
 
 /* Destroy the session after removing our listeners from
@@ -429,7 +432,7 @@ bool server_init(struct uwm_server *server) {
 		wlr_fractional_scale_manager_v1_create(server->wl_display, 1);
 	if (!server->fractional_scale_manager) {
 		wlr_log(WLR_ERROR, "failed to create fractional scale manager");
-		return false;
+		goto err;
 	}
 
 	/* Viewporter protocol: allows clients to scale their buffers via
@@ -438,7 +441,7 @@ bool server_init(struct uwm_server *server) {
 	server->viewporter = wlr_viewporter_create(server->wl_display);
 	if (!server->viewporter) {
 		wlr_log(WLR_ERROR, "failed to create viewporter");
-		return false;
+		goto err;
 	}
 
 	/* Transient seat protocol: allows clipboard helpers and similar to request
@@ -757,6 +760,10 @@ err:
 	if (server->backend)
 		wlr_backend_destroy(server->backend);
 	uwm_session_destroy(server);
+	if (server->seat)
+		wlr_seat_destroy(server->seat);
+	if (server->output_layout)
+		wlr_output_layout_destroy(server->output_layout);
 	wl_display_destroy(server->wl_display);
 	return false;
 }
@@ -837,6 +844,8 @@ void server_finish(struct uwm_server *server) {
 	wlr_renderer_destroy(server->renderer);
 	if (server->session)
 		wlr_session_destroy(server->session);
+	wlr_seat_destroy(server->seat);
+	wlr_output_layout_destroy(server->output_layout);
 	wl_display_destroy(server->wl_display);
 	wlr_log(WLR_INFO, "SERVER_FINISH END");
 }
