@@ -779,9 +779,6 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 	struct wlr_surface *surface = NULL;
 	struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
 		server->cursor->x, server->cursor->y, &surface, &sx, &sy);
-	if (!toplevel) {
-		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
-	}
 	if (surface) {
 		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);

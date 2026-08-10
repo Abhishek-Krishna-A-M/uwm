@@ -119,7 +119,8 @@ void layer_surface_arrange(struct uwm_output *output) {
 
 	if (topmost) {
 		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
-		if (keyboard) {
+		if (keyboard && server->seat->keyboard_state.focused_surface
+				!= topmost->layer_surface->surface) {
 			wlr_seat_keyboard_notify_enter(server->seat,
 				topmost->layer_surface->surface,
 				keyboard->keycodes,

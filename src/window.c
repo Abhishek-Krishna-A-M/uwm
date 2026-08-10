@@ -74,11 +74,20 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	}
 
 	if (ws->monocle) {
-		struct uwm_toplevel *tl;
-		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-			if (!tl->floating && !tl->fullscreen)
-				wlr_scene_node_set_enabled(&tl->scene_tree->node,
-					tl == toplevel);
+		struct uwm_toplevel *old = ws->last_focused;
+		if (old && old != toplevel
+				&& !old->floating && !old->fullscreen) {
+			wlr_scene_node_set_enabled(&old->scene_tree->node, false);
+			if (!toplevel->floating && !toplevel->fullscreen)
+				wlr_scene_node_set_enabled(
+					&toplevel->scene_tree->node, true);
+		} else {
+			struct uwm_toplevel *tl;
+			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+				if (!tl->floating && !tl->fullscreen)
+					wlr_scene_node_set_enabled(&tl->scene_tree->node,
+						tl == toplevel);
+			}
 		}
 	if (ws->output) {
 			struct uwm_output *o = ws->output;

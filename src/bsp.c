@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <math.h>
+#include <wlr/util/log.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include "bsp.h"
@@ -21,8 +22,11 @@ void bsp_pool_init(struct uwm_bsp_pool *pool)
 
 struct uwm_bsp_node *bsp_node_alloc(struct uwm_bsp_pool *pool)
 {
-	if (!pool->freelist)
+	if (!pool->freelist) {
+		wlr_log(WLR_ERROR, "BSP node pool exhausted (%d nodes)",
+			BSP_POOL_SIZE);
 		return NULL;
+	}
 	struct uwm_bsp_node *node = pool->freelist;
 	pool->freelist = node->first;
 	node->first = NULL;
