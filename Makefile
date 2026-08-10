@@ -21,8 +21,8 @@ CFLAGS = -g -fsanitize=address -fno-omit-frame-pointer -O0
 LDFLAGS = -fsanitize=address
 $(info Building with AddressSanitizer)
 else
-CFLAGS = -O2 -DNDEBUG -march=native
-LDFLAGS =
+CFLAGS = -O3 -DNDEBUG -march=native -flto
+LDFLAGS = -flto
 endif
 
 all: config.h uwm
