@@ -45,7 +45,6 @@ struct uwm_toplevel {
 	/* --- flags packed together --- */
 	unsigned int floating : 1;
 	unsigned int fullscreen : 1;
-	unsigned int is_transient : 1;
 	unsigned int saved_floating : 1;
 	unsigned int bsp_saved_is_second : 1;
 	unsigned int bsp_saved : 1;

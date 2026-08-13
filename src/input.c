@@ -780,7 +780,12 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 	struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
 		server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 	if (surface) {
-		wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
+		/* Only emit enter when the pointed surface actually changed;
+		 * wlr_seat_pointer_notify_enter on an unchanged surface is
+		 * pure overhead on every motion event. */
+		if (surface != seat->pointer_state.focused_surface) {
+			wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
+		}
 		wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 
 		if (toplevel) {
@@ -790,6 +795,10 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 				focus_toplevel(toplevel);
 			}
 		}
+	} else if (seat->pointer_state.focused_surface) {
+		/* Cursor left all surfaces: drop pointer focus so clicks and
+		 * scrolls on the empty desktop don't land on the last window. */
+		wlr_seat_pointer_clear_focus(seat);
 	}
 }
 
@@ -840,7 +849,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			server->seat, event->time_msec, event->button, event->state);
 		wlr_seat_pointer_notify_frame(server->seat);
 
-		if (toplevel && !toplevel->is_transient)
+		if (toplevel)
 			focus_toplevel(toplevel);
 	} else {
 		wlr_seat_pointer_notify_button(server->seat,

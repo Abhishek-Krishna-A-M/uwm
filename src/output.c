@@ -77,6 +77,16 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 			ls->output = NULL;
 	}
 
+	/* Invalidate bar workspace groups referencing this output so pending
+	 * bar notifications don't dereference freed memory on hotplug. */
+	if (server->bar_manager) {
+		struct uwm_workspace_group *group;
+		wl_list_for_each(group, &server->bar_manager->groups, link) {
+			if (group->output == output)
+				group->output = NULL;
+		}
+	}
+
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
 	wl_list_remove(&output->destroy.link);

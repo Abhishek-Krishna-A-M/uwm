@@ -155,7 +155,9 @@ static void run_autostart(void)
 }
 
 int main(int argc, char *argv[]) {
-	wlr_log_init(WLR_DEBUG, NULL);
+	/* Debug logging is opt-in (UWM_DEBUG=1) so the input/focus hot
+	 * paths don't pay fprintf syscalls on every event. */
+	wlr_log_init(getenv("UWM_DEBUG") ? WLR_DEBUG : WLR_ERROR, NULL);
 	char *startup_cmd = NULL;
 
 	int c;
@@ -182,7 +184,7 @@ int main(int argc, char *argv[]) {
 
 	const char *socket = wl_display_add_socket_auto(server.wl_display);
 	if (!socket) {
-		wlr_backend_destroy(server.backend);
+		server_finish(&server);
 		return 1;
 	}
 

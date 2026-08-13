@@ -21,9 +21,6 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (toplevel == NULL) {
 		return;
 	}
-	if (toplevel->is_transient) {
-		return;
-	}
 	struct uwm_server *server = toplevel->server;
 	struct wlr_seat *seat = server->seat;
 	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
@@ -209,10 +206,6 @@ struct uwm_toplevel *desktop_toplevel_at(
 	if (!tree)
 		return NULL;
 	struct uwm_toplevel *result = tree->node.data;
-	if (result->is_transient) {
-		*surface = NULL;
-		return NULL;
-	}
 	return result;
 }
 
@@ -436,17 +429,15 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (focus_was_displaced) {
 		ws->focused = NULL;
 
-		if (bsp_sibling && !bsp_sibling->is_transient) {
+		if (bsp_sibling) {
 			ws->focused = bsp_sibling;
 		}
 
 		if (!ws->focused) {
 			struct uwm_toplevel *candidate;
 			wl_list_for_each(candidate, &ws->toplevels, workspace_link) {
-				if (!candidate->is_transient) {
-					ws->focused = candidate;
-					break;
-				}
+				ws->focused = candidate;
+				break;
 			}
 		}
 
@@ -596,6 +587,14 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	/* Notify bar: workspace occupancy may have changed */
 	if (toplevel->server->bar_manager && toplevel->server->active_output) {
 		uwm_bar_send_output(toplevel->server->active_output);
+	}
+
+	/* Drop stale bar dedup references so a recycled toplevel address
+	 * can't suppress future bar updates. */
+	struct uwm_output *output;
+	wl_list_for_each(output, &toplevel->server->outputs, link) {
+		if (output->bar_focused_toplevel == toplevel)
+			output->bar_focused_toplevel = NULL;
 	}
 
 	free(toplevel);

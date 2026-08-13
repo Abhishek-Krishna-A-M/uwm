@@ -239,14 +239,11 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 	/* Only show if the target workspace is currently displayed on an output */
 	if (new_ws->output) {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
-		if (!toplevel->is_transient) {
-			new_ws->focused = toplevel;
-			focus_toplevel(toplevel);
-		}
+		new_ws->focused = toplevel;
+		focus_toplevel(toplevel);
 	} else {
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-		if (!toplevel->is_transient)
-			new_ws->focused = toplevel;
+		new_ws->focused = toplevel;
 	}
 
 	workspace_arrange_on_output(old_ws, old_ws->output,
@@ -269,11 +266,11 @@ void workspace_cycle_next(struct uwm_server *server)
 
 	struct uwm_toplevel *tl;
 	wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-		if (count < UWM_MAX_WINDOWS && !tl->is_transient)
+		if (count < UWM_MAX_WINDOWS)
 			windows[count++] = tl;
 	}
 	wl_list_for_each(tl, &ws->floating_windows, floating_link) {
-		if (count < UWM_MAX_WINDOWS && !tl->is_transient)
+		if (count < UWM_MAX_WINDOWS)
 			windows[count++] = tl;
 	}
 
