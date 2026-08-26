@@ -37,6 +37,12 @@ static int cached_thermal_zone = -1;
 static pthread_mutex_t g_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool g_monitors_running = false;
 
+/* Used to block the audio monitor thread until shutdown instead of spinning
+ * on usleep. g_monitors_running is set false + broadcast under this mutex in
+ * data_stop_monitors. */
+static pthread_mutex_t g_run_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_run_cond = PTHREAD_COND_INITIALIZER;
+
 /* Shared globals for volume (written by PA callback, read by main thread) */
 int g_vol_pct = 0;
 bool g_muted = false;
@@ -360,9 +366,11 @@ static void *audio_monitor_thread(void *arg) {
 
 	pa_threaded_mainloop_start(ams->mainloop);
 
-	while (g_monitors_running) {
-		usleep(100000);
-	}
+	/* Block until shutdown signals us, instead of busy-waiting. */
+	pthread_mutex_lock(&g_run_mutex);
+	while (g_monitors_running)
+		pthread_cond_wait(&g_run_cond, &g_run_mutex);
+	pthread_mutex_unlock(&g_run_mutex);
 
 	pa_threaded_mainloop_lock(ams->mainloop);
 	pa_threaded_mainloop_stop(ams->mainloop);
@@ -500,7 +508,10 @@ void data_start_monitors(State *state) {
 }
 
 void data_stop_monitors(void) {
+	pthread_mutex_lock(&g_run_mutex);
 	g_monitors_running = false;
+	pthread_cond_broadcast(&g_run_cond);
+	pthread_mutex_unlock(&g_run_mutex);
 
 	pthread_join(g_audio_thread, NULL);
 	pthread_join(g_network_thread, NULL);
