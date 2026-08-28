@@ -551,13 +551,13 @@ bool server_init(struct uwm_server *server) {
 	}
 
 #if WLR_HAS_XWAYLAND
-	/* XWayland — lazy mode if -x passed, else pure Wayland.
-	 * lazy=true defers X server spawn until first X client connects, avoids :0 conflict.
-	 * DISPLAY still set at create time so Wayland clients inherit it; X server starts on demand. */
+	/* XWayland — eager mode if -x passed, else pure Wayland.
+	 * eager (lazy=false) starts X server immediately so it appears in htop
+	 * and X clients connect without extra delay. DISPLAY is set right away. */
 	if (server->xwayland_enabled) {
-		server->xwayland = wlr_xwayland_create(server->wl_display, server->compositor, true);
+		server->xwayland = wlr_xwayland_create(server->wl_display, server->compositor, false);
 		if (!server->xwayland) {
-			wlr_log(WLR_ERROR, "Failed to create XWayland (lazy)");
+			wlr_log(WLR_ERROR, "Failed to create XWayland");
 			goto err;
 		}
 		server->xwayland_surface.notify = server_new_xwayland_surface;
@@ -572,9 +572,9 @@ bool server_init(struct uwm_server *server) {
 		 * RMLVO → “Failed to compile keymap”. Set it now (seat exists, keyboard
 		 * may be added later) so xwm tracks future wlr_seat_set_keyboard(). */
 		wlr_xwayland_set_seat(server->xwayland, server->seat);
-		wlr_log(WLR_INFO, "XWayland enabled (lazy) DISPLAY=%s", server->xwayland->display_name);
+		wlr_log(WLR_INFO, "XWayland enabled DISPLAY=%s", server->xwayland->display_name);
 	} else {
-		wlr_log(WLR_INFO, "XWayland disabled (pure Wayland). Use -x for lazy XWayland.");
+		wlr_log(WLR_INFO, "XWayland disabled (pure Wayland). Use -x to enable.");
 	}
 #endif
 

@@ -2,7 +2,8 @@
  * Copy this to config.h and edit config.h to override. */
 
 /* appearance */
-#define BORDERPX 2
+#define BORDERPX 1
+#define BORDER_COLOR 0xFF5E81AC
 #define RESIZEFACTOR 0.05f
 #define FLOATING_MIN_WIDTH 100
 #define FLOATING_MIN_HEIGHT 60
@@ -123,6 +124,8 @@
 	KEY(MOD, XKB_KEY_Tab, workspaceprev, {0}) \
 	KEY(MOD, XKB_KEY_bracketleft, workspacedec, {0}) \
 	KEY(MOD, XKB_KEY_bracketright, workspaceinc, {0}) \
+	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft, workspacedec_active, {0}) \
+	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_braceright, workspaceinc_active, {0}) \
 	KEY(MOD, XKB_KEY_f, togglefullscreen, {0}) \
 	KEY(MOD, XKB_KEY_s, togglefloating, {0}) \
 	KEY(MOD, XKB_KEY_m, togglemonocle, {0}) \

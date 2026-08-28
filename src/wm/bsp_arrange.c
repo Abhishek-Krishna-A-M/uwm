@@ -178,6 +178,7 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
 	}
+	workspace_update_borders(workspace);
 }
 
 void get_output_size(struct uwm_workspace *ws,

@@ -68,6 +68,7 @@ void toggle_monocle(struct uwm_workspace *workspace)
 		if (focused)
 			focus_toplevel(focused);
 	}
+	workspace_update_borders(workspace);
 }
 
 void set_bsp_mode(struct uwm_workspace *workspace)
@@ -87,6 +88,7 @@ void set_bsp_mode(struct uwm_workspace *workspace)
 
 	if (workspace->monocle)
 		toggle_monocle(workspace);
+	workspace_update_borders(workspace);
 }
 
 

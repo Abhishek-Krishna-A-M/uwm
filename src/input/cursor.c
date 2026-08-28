@@ -34,6 +34,7 @@ static void process_cursor_move(struct uwm_server *server) {
 	}
 
 	wlr_scene_node_set_position(&toplevel->scene_tree->node, new_x, new_y);
+	toplevel_update_border(toplevel);
 }
 
 static void process_cursor_resize(struct uwm_server *server) {
@@ -85,6 +86,7 @@ static void process_cursor_resize(struct uwm_server *server) {
 	}
 
 	wlr_scene_node_set_position(&toplevel->scene_tree->node, new_left, new_top);
+	toplevel_update_border(toplevel);
 	/* 1.1 coalesce: defer client configure to frame */
 	server->pending_x = new_left;
 	server->pending_y = new_top;

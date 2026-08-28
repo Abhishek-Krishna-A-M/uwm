@@ -142,6 +142,7 @@ void workspace_switch(struct uwm_server *server, uint32_t workspace)
 	}
 
 	output_set_workspace(output, workspace);
+	workspace_update_borders(&server->workspaces.workspaces[workspace]);
 }
 
 void workspace_focus_previous(struct uwm_server *server)
@@ -250,6 +251,8 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 		toplevel->server->config.inner_gap);
 	workspace_arrange_on_output(new_ws, new_ws->output,
 		toplevel->server->config.inner_gap);
+	workspace_update_borders(old_ws);
+	workspace_update_borders(new_ws);
 }
 
 void workspace_cycle_next(struct uwm_server *server)
@@ -286,7 +289,27 @@ void workspace_cycle_next(struct uwm_server *server)
 	}
 
 	int next = (idx + 1) % count;
-	focus_toplevel(windows[next]);
+	struct uwm_toplevel *next_tl = windows[next];
+	focus_toplevel(next_tl);
+
+	/* also warp cursor to centered window */
+	if (next_tl && next_tl->scene_tree) {
+		struct wlr_box geo = toplevel_geometry(next_tl);
+		double wx = next_tl->scene_tree->node.x + geo.x;
+		double wy = next_tl->scene_tree->node.y + geo.y;
+		double ww = geo.width;
+		double wh = geo.height;
+		if (ww > 0 && wh > 0) {
+			wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
+			/* ensure pointer focus follows warp */
+			double sx, sy;
+			struct wlr_surface *surface = NULL;
+			struct uwm_toplevel *found = desktop_toplevel_at(server, server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+			if (surface) {
+				wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+			}
+		}
+	}
 }
 
 void workspace_prev(struct uwm_server *server)
@@ -301,6 +324,41 @@ void workspace_next(struct uwm_server *server)
 	uint32_t current = server->workspaces.current;
 	uint32_t next = (current + 1) % UWM_WORKSPACE_COUNT;
 	workspace_switch(server, next);
+}
+
+static bool workspace_is_active(struct uwm_workspace *ws) {
+	if (ws->output) return true;
+	if (!wl_list_empty(&ws->toplevels)) return true;
+	if (!wl_list_empty(&ws->floating_windows)) return true;
+	return false;
+}
+
+void workspace_next_active(struct uwm_server *server)
+{
+	if (!server) return;
+	uint32_t cur = server->active_output ? server->active_output->current_workspace : server->workspaces.current;
+	for (uint32_t i = 1; i < UWM_WORKSPACE_COUNT; i++) {
+		uint32_t cand = (cur + i) % UWM_WORKSPACE_COUNT;
+		struct uwm_workspace *ws = &server->workspaces.workspaces[cand];
+		if (workspace_is_active(ws)) {
+			workspace_switch(server, cand);
+			return;
+		}
+	}
+}
+
+void workspace_prev_active(struct uwm_server *server)
+{
+	if (!server) return;
+	uint32_t cur = server->active_output ? server->active_output->current_workspace : server->workspaces.current;
+	for (uint32_t i = 1; i < UWM_WORKSPACE_COUNT; i++) {
+		uint32_t cand = (cur + UWM_WORKSPACE_COUNT - i) % UWM_WORKSPACE_COUNT;
+		struct uwm_workspace *ws = &server->workspaces.workspaces[cand];
+		if (workspace_is_active(ws)) {
+			workspace_switch(server, cand);
+			return;
+		}
+	}
 }
 
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,

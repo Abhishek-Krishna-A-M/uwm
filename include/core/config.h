@@ -60,6 +60,7 @@ extern const size_t keys_unmodified_len;
 
 extern const char *xkb_options;
 extern const int borderpx;
+extern const uint32_t border_color;
 extern const float resizefactor;
 extern const int floating_min_width;
 extern const int floating_min_height;
@@ -111,6 +112,8 @@ void movetows(const union arg *arg);
 void workspaceinc(const union arg *arg);
 void workspacedec(const union arg *arg);
 void workspaceprev(const union arg *arg);
+void workspaceinc_active(const union arg *arg);
+void workspacedec_active(const union arg *arg);
 void togglefloating(const union arg *arg);
 void togglefullscreen(const union arg *arg);
 void togglemonocle(const union arg *arg);

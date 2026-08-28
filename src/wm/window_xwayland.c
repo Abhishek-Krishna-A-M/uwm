@@ -249,6 +249,7 @@ static void xwayland_toplevel_destroy(struct wl_listener *listener, void *data) 
 	}
 	if (toplevel->server->bar_manager && toplevel->server->active_output) uwm_bar_send_output(toplevel->server->active_output);
 	struct uwm_output *output; wl_list_for_each(output, &toplevel->server->outputs, link) if (output->bar_focused_toplevel == toplevel) output->bar_focused_toplevel = NULL;
+	toplevel_destroy_border(toplevel);
 	if (toplevel->scene_tree) wlr_scene_node_destroy(&toplevel->scene_tree->node);
 	free(toplevel);
 }
@@ -392,6 +393,7 @@ void server_new_xwayland_surface(struct wl_listener *listener, void *data) {
 	}
 	if (!toplevel->scene_tree) { free(toplevel); xs->data = NULL; return; }
 	toplevel->scene_tree->node.data = toplevel;
+	toplevel_create_border(toplevel);
 	if (unmanaged && xs->surface) {
 		/* position unmanaged at requested x/y */
 		wlr_scene_node_set_position(&toplevel->scene_tree->node, xs->x, xs->y);

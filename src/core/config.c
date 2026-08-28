@@ -44,6 +44,7 @@ const char *const autostart[] = { AUTOSTART };
 /* scalar settings */
 const char *xkb_options = XKB_OPTIONS;
 const int borderpx = BORDERPX;
+const uint32_t border_color = BORDER_COLOR;
 const float resizefactor = RESIZEFACTOR;
 const int floating_min_width = FLOATING_MIN_WIDTH;
 const int floating_min_height = FLOATING_MIN_HEIGHT;

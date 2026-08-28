@@ -246,6 +246,18 @@ void workspaceprev(const union arg *arg)
 		workspace_switch(uwm_server, uwm_server->workspaces.last);
 }
 
+void workspaceinc_active(const union arg *arg)
+{
+	(void)arg;
+	workspace_next_active(uwm_server);
+}
+
+void workspacedec_active(const union arg *arg)
+{
+	(void)arg;
+	workspace_prev_active(uwm_server);
+}
+
 /* layout toggles */
 void togglefloating(const union arg *arg)
 {

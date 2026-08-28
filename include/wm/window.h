@@ -38,6 +38,12 @@ struct uwm_toplevel {
 		struct wl_list floating_link;
 	};
 
+	/* --- border (active window only) --- */
+	struct wlr_scene_rect *border_top;
+	struct wlr_scene_rect *border_bottom;
+	struct wlr_scene_rect *border_left;
+	struct wlr_scene_rect *border_right;
+
 	/* --- geometry --- */
 	int float_x, float_y, float_width, float_height;
 	int saved_x, saved_y, saved_width, saved_height;
@@ -118,5 +124,10 @@ void server_new_toplevel_decoration(struct wl_listener *listener, void *data);
 #if WLR_HAS_XWAYLAND
 void server_new_xwayland_surface(struct wl_listener *listener, void *data);
 #endif
+
+void toplevel_create_border(struct uwm_toplevel *toplevel);
+void toplevel_update_border(struct uwm_toplevel *toplevel);
+void toplevel_destroy_border(struct uwm_toplevel *toplevel);
+void workspace_update_borders(struct uwm_workspace *ws);
 
 #endif /* WINDOW_H */

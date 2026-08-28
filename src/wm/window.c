@@ -174,6 +174,8 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
 		uwm_bar_notify_focus(server, toplevel);
 	}
+	/* update borders for old and new workspace */
+	workspace_update_borders(toplevel->workspace);
 }
 
 struct uwm_toplevel *desktop_toplevel_at(
@@ -342,6 +344,7 @@ float_window:
 	}
 
 	focus_toplevel(toplevel);
+	workspace_update_borders(toplevel->workspace);
 	return;
 }
 
@@ -582,6 +585,7 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 			output->bar_focused_toplevel = NULL;
 	}
 
+	toplevel_destroy_border(toplevel);
 	free(toplevel);
 }
 
@@ -653,6 +657,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	}
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
+	toplevel_create_border(toplevel);
 
 	/* image_capture_scene is created lazily on first capture request */
 

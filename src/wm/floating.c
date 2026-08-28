@@ -254,5 +254,6 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 
 		if (ws->focused == window)
 			focus_toplevel(window);
+		workspace_update_borders(ws);
 	}
 }
