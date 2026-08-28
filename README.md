@@ -222,43 +222,76 @@ All keybindings use **Super (Logo)** as the primary modifier.
 
 ```
 uwm/
-├── src/                    # Source files
-│   ├── main.c              # Entry point, autostart
-│   ├── server.c            # Server initialization and teardown
-│   ├── bsp.c               # BSP tree management
-│   ├── workspace.c         # Workspace management
-│   ├── floating.c          # Floating window support
-│   ├── layout.c            # Layout modes (tabbed, monocle)
-│   ├── window.c            # Window lifecycle and focus
-│   ├── input.c             # Keyboard and pointer handling
-│   ├── output.c            # Output management
-│   ├── layer_shell.c       # Layer shell protocol
-│   ├── uwm_bar.c           # UWM bar protocol
-│   ├── idle_inhibit.c      # Idle inhibit protocol
-│   ├── rules.c             # Window rules
-│   └── config.c            # Configuration loading
-├── include/                # Header files
-│   ├── server.h
-│   ├── bsp.h
-│   ├── workspace.h
-│   ├── floating.h
-│   ├── layout.h
-│   ├── window.h
-│   ├── input.h
-│   ├── output.h
-│   ├── layer_shell.h
-│   ├── uwm_bar.h
-│   ├── idle_inhibit.h
-│   ├── rules.h
-│   └── config.h
-├── protocol/               # Wayland protocol implementations
-│   ├── uwm-bar-unstable-v1.xml
-│   ├── wlr-layer-shell-unstable-v1-protocol.c
-│   └── uwm-bar-unstable-v1-protocol.c
-├── docs/                   # Documentation
-├── config.def.h            # Default configuration
-├── Makefile                # Build system
-└── startup.sh              # Startup script
+├── Makefile                # Build system (outputs to build/)
+├── config.def.h            # Default fallback configuration (tracked)
+├── config.h                # Active local configuration (git-ignored)
+├── README.md               # Project documentation
+├── uwm.desktop             # Display manager entry
+├── backup/                 # Crash dumps, binary snapshots
+├── build/                  # Generated artifacts (mirrors src/ layout)
+│   ├── uwm                 # Final binary (symlinked as ./uwm)
+│   ├── core/               # core/*.o
+│   ├── input/              # input/*.o
+│   ├── output/             # output/*.o
+│   ├── shell/              # shell/*.o
+│   ├── ui/                 # ui/*.o
+│   ├── wm/                 # wm/*.o
+│   └── protocol/           # protocol/*.o
+├── docs/                   # Extended docs, notes, man pages (kept)
+│   ├── sway/               # reference (read-only)
+│   ├── bspwm/              # bspwm reference
+│   └── ...
+├── protocol/               # Wayland XML + generated C/H
+│   ├── xdg-shell-protocol.c/h
+│   ├── wlr-layer-shell-unstable-v1-protocol.c/h
+│   ├── uwm-bar-unstable-v1-protocol.c/h
+│   └── *.xml
+├── tools/                  # Helper tools (ubar, ulaunch)
+│   ├── ubar/
+│   └── ulaunch/
+├── include/                # Headers grouped by domain
+│   ├── core/
+│   │   ├── config.h
+│   │   └── server.h
+│   ├── input/
+│   │   └── input.h
+│   ├── output/
+│   │   └── output.h
+│   ├── shell/
+│   │   ├── idle_inhibit.h
+│   │   ├── layer_shell.h
+│   │   └── session_lock.h
+│   ├── ui/
+│   │   └── uwm_bar.h
+│   └── wm/
+│       ├── bsp.h
+│       ├── floating.h
+│       ├── layout.h
+│       ├── rules.h
+│       ├── window.h
+│       └── workspace.h
+└── src/                    # Sources grouped by domain (mirrors include/)
+    ├── core/
+    │   ├── main.c          # Entry, autostart, crash recovery
+    │   ├── server.c        # Server init/teardown (957 → split into session/capture)
+    │   └── config.c        # Compile-time config glue
+    ├── input/
+    │   └── input.c         # Keyboard/pointer/seat (1005 → cursor/keyboard/actions)
+    ├── output/
+    │   └── output.c        # Output management
+    ├── shell/
+    │   ├── idle_inhibit.c
+    │   ├── layer_shell.c
+    │   └── session_lock.c
+    ├── ui/
+    │   └── uwm_bar.c
+    └── wm/
+        ├── bsp.c           # BSP tree (739 → pool/tree/arrange/nav)
+        ├── floating.c
+        ├── layout.c
+        ├── rules.c
+        ├── window.c        # 1278 → toplevel/focus/xdg/xwayland
+        └── workspace.c
 ```
 
 ## Performance

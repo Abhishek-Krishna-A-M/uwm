@@ -9,7 +9,7 @@ struct uwm_toplevel;
 struct uwm_server;
 struct wlr_scene_tree;
 
-#define BSP_POOL_SIZE 512
+#define BSP_POOL_SIZE 576 /* 2*256 + 64 margin — fixes 1.9 */
 
 struct uwm_bsp_pool;
 

@@ -17,27 +17,29 @@ static bool glob_match(const char *pattern, const char *string)
 		return true;
 	if (!string)
 		return false;
-
-	while (*pattern && *string) {
-		if (*pattern == '*') {
-			pattern++;
-			if (!*pattern) return true;
-			while (*string) {
-				if (glob_match(pattern, string))
-					return true;
-				string++;
-			}
-			return false;
+	/* linear O(n+m) glob without exponential recursion */
+	const char *p = pattern, *s = string;
+	const char *star = NULL;
+	const char *ss = s;
+	while (*s) {
+		if (*p == '?' || *p == *s) {
+			p++; s++;
+			continue;
 		}
-		if (*pattern == '?' || *pattern == *string) {
-			pattern++;
-			string++;
+		if (*p == '*') {
+			star = p++;
+			ss = s;
+			continue;
+		}
+		if (star) {
+			p = star + 1;
+			s = ++ss;
 			continue;
 		}
 		return false;
 	}
-	while (*pattern == '*') pattern++;
-	return *pattern == '\0' && *string == '\0';
+	while (*p == '*') p++;
+	return *p == '\0';
 }
 
 static bool rule_matches(struct uwm_rule *rule, const char *app_id, const char *title)
@@ -56,12 +58,22 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 		uint32_t target = (uint32_t)(rule->workspace - 1);
 		if (target < UWM_WORKSPACE_COUNT
 				&& target != toplevel->workspace->id) {
+			struct uwm_workspace *old_ws = toplevel->workspace;
 			struct uwm_workspace *new_ws =
 				&toplevel->server->workspaces.workspaces[target];
 
+			/* fix BSP desync: remove from old BSP before moving */
+			if (!toplevel->floating && !toplevel->fullscreen && old_ws->root) {
+				bsp_remove(old_ws, toplevel);
+			}
 			wl_list_remove(&toplevel->workspace_link);
 			wl_list_insert(&new_ws->toplevels, &toplevel->workspace_link);
 			toplevel->workspace = new_ws;
+			if (!toplevel->floating && !toplevel->fullscreen && new_ws->root) {
+				/* will be inserted by caller (map) if needed; if already tiled, re-insert */
+				if (old_ws->root)
+					bsp_insert(new_ws, toplevel);
+			}
 
 			if (toplevel->server->workspaces.current != target) {
 				wlr_scene_node_set_enabled(
@@ -93,8 +105,7 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 			toplevel->server->floating_layer);
 		wlr_scene_node_set_position(&toplevel->scene_tree->node,
 			toplevel->float_x, toplevel->float_y);
-		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
-			toplevel->float_width, toplevel->float_height);
+		toplevel_set_size(toplevel, toplevel->float_width, toplevel->float_height);
 	}
 
 	if (rule->set_fullscreen && !toplevel->fullscreen) {
@@ -107,8 +118,8 @@ static void apply_rule(struct uwm_config *config, struct uwm_rule *rule,
 
 void rule_apply_all(struct uwm_config *config, struct uwm_toplevel *toplevel)
 {
-	const char *app_id = toplevel->xdg_toplevel->app_id;
-	const char *title = toplevel->xdg_toplevel->title;
+	const char *app_id = toplevel_app_id(toplevel);
+	const char *title = toplevel_title(toplevel);
 
 	for (int i = 0; i < config->rule_count; i++) {
 		struct uwm_rule *rule = &config->rules[i];

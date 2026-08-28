@@ -52,9 +52,14 @@ void layer_surface_arrange(struct uwm_output *output) {
 		return;
 	}
 
+	/* Use layout box (logical) not wlr_output physical,
+	 * so rofi 28% etc matches expected on HiDPI (scale). wlr_output->width
+	 * is physical; layout box is logical (physical/scale). */
+	struct wlr_box layout_box;
+	wlr_output_layout_get_box(output->server->output_layout, wlr_output, &layout_box);
 	struct wlr_box usable_area = {
-		.width = wlr_output->width,
-		.height = wlr_output->height,
+		.width = layout_box.width,
+		.height = layout_box.height,
 	};
 	const struct wlr_box full_area = usable_area;
 
@@ -192,9 +197,15 @@ static void handle_surface_commit(struct wl_listener *listener, void *data) {
 	struct wlr_layer_surface_v1 *layer_surface = surface->layer_surface;
 	(void)data;
 
-	/* On any commit with state changes, re-arrange layers */
+	/* Only re-arrange when layout-affecting props changed */
+	uint32_t layout_mask = WLR_LAYER_SURFACE_V1_STATE_DESIRED_SIZE |
+		WLR_LAYER_SURFACE_V1_STATE_ANCHOR |
+		WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE |
+		WLR_LAYER_SURFACE_V1_STATE_MARGIN |
+		WLR_LAYER_SURFACE_V1_STATE_LAYER |
+		WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY;
 	if (layer_surface->initial_commit
-			|| layer_surface->current.committed
+			|| (layer_surface->current.committed & layout_mask)
 			|| layer_surface->surface->mapped != surface->mapped) {
 		surface->mapped = layer_surface->surface->mapped;
 		if (surface->output) {

@@ -13,6 +13,9 @@
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include "server.h"
+#include "capture.h"
+#include "transient.h"
+#include "output_manager.h"
 #include "input.h"
 #include "output.h"
 #include "window.h"
@@ -92,207 +95,17 @@ static void handle_session_active_sentinel(struct wl_listener *listener, void *d
 	handle_session_active(&g_sentinel_server->session_active, data);
 }
 
-static void handle_new_foreign_toplevel_capture_request(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, new_foreign_toplevel_capture_request);
-	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;
-	struct uwm_toplevel *toplevel = request->toplevel_handle->data;
-
-	if (!toplevel)
-		return;
-
-	/* Lazily create the per-window capture scene on first request */
-	if (!toplevel->image_capture_scene) {
-		toplevel->image_capture_scene = wlr_scene_create();
-		toplevel->image_capture_scene->restack_xwayland_surfaces = false;
-		wlr_scene_xdg_surface_create(&toplevel->image_capture_scene->tree,
-			toplevel->xdg_toplevel->base);
-	}
-
-	struct wlr_ext_image_capture_source_v1 *source =
-		wlr_ext_image_capture_source_v1_create_with_scene_node(
-			&toplevel->image_capture_scene->tree.node,
-			wl_display_get_event_loop(server->wl_display),
-			server->allocator,
-			server->renderer);
-	if (source) {
-		wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
-			request, source);
-	} else {
-		wlr_log(WLR_ERROR, "Failed to create capture source for toplevel");
-	}
+#if WLR_HAS_XWAYLAND
+static void handle_xwayland_ready(struct wl_listener *listener, void *data) {
+	struct uwm_server *server = wl_container_of(listener, server, xwayland_ready);
+	(void)data;
+	/* ready is emitted after XWayland socket is up; DISPLAY already set at create time (immediate) */
+	wlr_log(WLR_INFO, "XWayland ready DISPLAY=%s", server->xwayland ? server->xwayland->display_name : "(null)");
+	/* Ensure DISPLAY still exported to autostart children spawned after ready */
+	if (server->xwayland && server->xwayland->display_name)
+		setenv("DISPLAY", server->xwayland->display_name, true);
 }
-
-static void handle_new_capture_session(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, new_capture_session);
-	struct wlr_ext_image_copy_capture_session_v1 *session = data;
-	wlr_log(WLR_INFO, "New ext-image-copy-capture session created for source %p",
-		(void *)session->source);
-	struct uwm_output *output;
-	wl_list_for_each(output, &server->outputs, link) {
-		wlr_output_schedule_frame(output->wlr_output);
-	}
-}
-
-static void handle_transient_seat_create(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, transient_seat_create);
-	struct wlr_transient_seat_v1 *transient_seat = data;
-	static uint64_t i;
-	char name[64];
-	snprintf(name, sizeof(name), "transient-%" PRIx64, i++);
-	struct wlr_seat *new_seat = wlr_seat_create(server->wl_display, name);
-	if (new_seat) {
-		wlr_seat_set_capabilities(new_seat, WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_POINTER);
-		wlr_transient_seat_v1_ready(transient_seat, new_seat);
-	} else {
-		wlr_transient_seat_v1_deny(transient_seat);
-	}
-}
-
-static void handle_output_manager_apply(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, output_manager_apply);
-	struct wlr_output_configuration_v1 *config = data;
-
-	struct wlr_output_configuration_head_v1 *config_head;
-	wl_list_for_each(config_head, &config->heads, link) {
-		struct wlr_output *wlr_output = config_head->state.output;
-		struct uwm_output *output = output_from_wlr_output(server, wlr_output);
-		bool was_enabled = wlr_output->enabled;
-		bool will_be_enabled = config_head->state.enabled;
-
-		struct wlr_output_state state;
-		wlr_output_state_init(&state);
-		wlr_output_head_v1_state_apply(&config_head->state, &state);
-
-		if (!wlr_output_test_state(wlr_output, &state)) {
-			wlr_log(WLR_ERROR, "output %s: test failed", wlr_output->name);
-			wlr_output_configuration_v1_send_failed(config);
-			wlr_output_state_finish(&state);
-			wlr_output_configuration_v1_destroy(config);
-			return;
-		}
-
-		if (!wlr_output_commit_state(wlr_output, &state)) {
-			wlr_log(WLR_ERROR, "output %s: commit failed", wlr_output->name);
-			wlr_output_configuration_v1_send_failed(config);
-			wlr_output_state_finish(&state);
-			wlr_output_configuration_v1_destroy(config);
-			return;
-		}
-		wlr_output_state_finish(&state);
-
-		/* Output disabled: detach workspace, redirect focus */
-		if (was_enabled && !will_be_enabled && output) {
-			struct uwm_workspace *ws =
-				&server->workspaces.workspaces[output->current_workspace];
-			ws->output = NULL;
-
-			struct uwm_output *target = NULL;
-			struct uwm_output *iter;
-			wl_list_for_each(iter, &server->outputs, link) {
-				if (iter != output) { target = iter; break; }
-			}
-
-			if (server->active_output == output) {
-				server->active_output = target ? target : NULL;
-			}
-		}
-
-		/* Output enabled: reconnect workspace, arrange, show */
-		if (!was_enabled && will_be_enabled && output) {
-			uint32_t ws_id = output->current_workspace;
-			struct uwm_workspace *ws =
-				&server->workspaces.workspaces[ws_id];
-
-			/* Reclaim workspace if another output took it while disabled */
-			if (ws->output && ws->output != output) {
-				ws->output->current_workspace = ws_id;
-			}
-			ws->output = output;
-
-			layer_surface_arrange(output);
-
-			if (!server->active_output) {
-				server->active_output = output;
-				server->workspaces.current = ws_id;
-			}
-
-			if (ws->root)
-				bsp_arrange(ws, output->lx + output->usable_area.x,
-					output->ly + output->usable_area.y,
-					output->usable_area.width,
-					output->usable_area.height,
-					server->config.inner_gap);
-			workspace_show_on_output(ws, output);
-
-			if (ws->focused)
-				focus_toplevel(ws->focused);
-			else if (!wl_list_empty(&ws->toplevels)) {
-				struct uwm_toplevel *tl = wl_container_of(
-					ws->toplevels.next, tl, workspace_link);
-				focus_toplevel(tl);
-			} else if (!wl_list_empty(&ws->floating_windows)) {
-				struct uwm_toplevel *tl = wl_container_of(
-					ws->floating_windows.next, tl, floating_link);
-				focus_toplevel(tl);
-			}
-		}
-	}
-
-	wl_list_for_each(config_head, &config->heads, link) {
-		struct wlr_output *wlr_output = config_head->state.output;
-		wlr_output_layout_add(server->output_layout, wlr_output,
-			config_head->state.x, config_head->state.y);
-	}
-
-	wlr_output_configuration_v1_send_succeeded(config);
-	wlr_output_manager_v1_set_configuration(server->output_manager_v1, config);
-}
-
-static void handle_cursor_shape_request(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, cursor_shape_request);
-	struct wlr_cursor_shape_manager_v1_request_set_shape_event *event = data;
-
-	if (event->device_type != WLR_CURSOR_SHAPE_MANAGER_V1_DEVICE_TYPE_POINTER) {
-		return;
-	}
-
-	struct wlr_seat_client *focused_client =
-		server->seat->pointer_state.focused_client;
-	if (focused_client != event->seat_client) {
-		return;
-	}
-
-	const char *name = wlr_cursor_shape_v1_name(event->shape);
-	if (name) {
-		wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, name);
-	}
-}
-
-static void handle_output_manager_test(struct wl_listener *listener, void *data) {
-	struct uwm_server *server = wl_container_of(listener, server, output_manager_test);
-	struct wlr_output_configuration_v1 *config = data;
-
-	struct wlr_output_configuration_head_v1 *config_head;
-	bool ok = true;
-	wl_list_for_each(config_head, &config->heads, link) {
-		struct wlr_output *wlr_output = config_head->state.output;
-		struct wlr_output_state state;
-		wlr_output_state_init(&state);
-		wlr_output_head_v1_state_apply(&config_head->state, &state);
-		if (!wlr_output_test_state(wlr_output, &state)) {
-			ok = false;
-			wlr_output_state_finish(&state);
-			break;
-		}
-		wlr_output_state_finish(&state);
-	}
-
-	if (ok)
-		wlr_output_configuration_v1_send_succeeded(config);
-	else
-		wlr_output_configuration_v1_send_failed(config);
-	wlr_output_configuration_v1_destroy(config);
-}
+#endif
 
 /* Destroy the session after removing our listeners from
  * session->events.active. wlroots 0.20 asserts that the listener list is
@@ -338,6 +151,7 @@ bool server_init(struct uwm_server *server) {
 	wl_list_init(&server->outputs);
 	wl_list_init(&server->toplevels);
 	wl_list_init(&server->keyboards);
+	wl_list_init(&server->transient_seats);
 
 	/* The backend is a wlroots feature which abstracts the underlying input and
 	 * output hardware. The autocreate option will choose the most suitable
@@ -736,9 +550,55 @@ bool server_init(struct uwm_server *server) {
 		wlr_log(WLR_ERROR, "Failed to create ext foreign toplevel image capture source manager");
 	}
 
+#if WLR_HAS_XWAYLAND
+	/* XWayland — lazy mode if -x passed, else pure Wayland.
+	 * lazy=true defers X server spawn until first X client connects, avoids :0 conflict.
+	 * DISPLAY still set at create time so Wayland clients inherit it; X server starts on demand. */
+	if (server->xwayland_enabled) {
+		server->xwayland = wlr_xwayland_create(server->wl_display, server->compositor, true);
+		if (!server->xwayland) {
+			wlr_log(WLR_ERROR, "Failed to create XWayland (lazy)");
+			goto err;
+		}
+		server->xwayland_surface.notify = server_new_xwayland_surface;
+		wl_signal_add(&server->xwayland->events.new_surface, &server->xwayland_surface);
+		server->xwayland_ready.notify = handle_xwayland_ready;
+		wl_signal_add(&server->xwayland->events.ready, &server->xwayland_ready);
+		setenv("DISPLAY", server->xwayland->display_name, true);
+		/* wlroots 0.20.2 requires explicit seat assignment – Sway does this in
+		 * seat_send_focus (input/seat.c:196) and unmanaged_handle_map. UWM
+		 * previously only did it for override-redirect, so the XWM never
+		 * received the keyboard keymap and Xwayland fell back to an invalid
+		 * RMLVO → “Failed to compile keymap”. Set it now (seat exists, keyboard
+		 * may be added later) so xwm tracks future wlr_seat_set_keyboard(). */
+		wlr_xwayland_set_seat(server->xwayland, server->seat);
+		wlr_log(WLR_INFO, "XWayland enabled (lazy) DISPLAY=%s", server->xwayland->display_name);
+	} else {
+		wlr_log(WLR_INFO, "XWayland disabled (pure Wayland). Use -x for lazy XWayland.");
+	}
+#endif
+
 	return true;
 
 err:
+#if WLR_HAS_XWAYLAND
+	if (server->xwayland) {
+		wl_list_remove(&server->xwayland_surface.link);
+		wl_list_remove(&server->xwayland_ready.link);
+		wlr_xwayland_destroy(server->xwayland);
+		server->xwayland = NULL;
+		unsetenv("DISPLAY");
+	}
+#endif
+	{
+		struct uwm_transient_entry *e, *tmp;
+		wl_list_for_each_safe(e, tmp, &server->transient_seats, link) {
+			wl_list_remove(&e->link);
+			wl_list_remove(&e->seat_destroy.link);
+			wlr_seat_destroy(e->seat);
+			free(e);
+		}
+	}
 	uwm_bar_manager_destroy(server);
 	session_lock_destroy(server);
 	idle_inhibit_destroy(server);
@@ -791,12 +651,27 @@ void server_finish(struct uwm_server *server) {
 	if (server->transient_seat_manager) {
 		wl_list_remove(&server->transient_seat_create.link);
 	}
+	{
+		struct uwm_transient_entry *e, *tmp;
+		wl_list_for_each_safe(e, tmp, &server->transient_seats, link) {
+			wl_list_remove(&e->link);
+			wl_list_remove(&e->seat_destroy.link);
+			wlr_seat_destroy(e->seat);
+			free(e);
+		}
+	}
 	if (server->foreign_toplevel_capture_source_manager) {
 		wl_list_remove(&server->new_foreign_toplevel_capture_request.link);
 	}
 	if (server->ext_image_copy_capture_manager) {
 		wl_list_remove(&server->new_capture_session.link);
 	}
+#if WLR_HAS_XWAYLAND
+	if (server->xwayland) {
+		wl_list_remove(&server->xwayland_surface.link);
+		wl_list_remove(&server->xwayland_ready.link);
+	}
+#endif
 
 	wl_list_remove(&server->cursor_motion.link);
 	wl_list_remove(&server->cursor_motion_absolute.link);
@@ -842,6 +717,13 @@ void server_finish(struct uwm_server *server) {
 	wlr_cursor_destroy(server->cursor);
 	wlr_allocator_destroy(server->allocator);
 	wlr_renderer_destroy(server->renderer);
+#if WLR_HAS_XWAYLAND
+	if (server->xwayland) {
+		wlr_xwayland_destroy(server->xwayland);
+		server->xwayland = NULL;
+		unsetenv("DISPLAY");
+	}
+#endif
 	if (server->session)
 		wlr_session_destroy(server->session);
 	wlr_seat_destroy(server->seat);

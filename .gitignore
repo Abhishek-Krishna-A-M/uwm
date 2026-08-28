@@ -37,6 +37,7 @@ lcov.info
 # Build Directories
 
 build/
+output/  # legacy, keep ignored for compatibility
 builddir/
 cmake-build-*/
 meson-private/
@@ -93,10 +94,9 @@ temp/
 test-results/
 benchmark-results/
 
-# Core Dumps
-
-core
-core.*
+# Core Dumps (root only, don't ignore src/core/ and include/core/)
+/core
+/core.*
 vgcore.*
 
 # Local Config
@@ -109,6 +109,9 @@ config.h
 
 # Build binaries
 /uwm
+build/uwm
 /tools/ulaunch/ulaunch
 /tools/ubar/ubar
+backup/core.*
+backup/core
 

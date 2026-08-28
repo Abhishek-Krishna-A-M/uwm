@@ -16,6 +16,7 @@
 #include "rules.h"
 #include "output.h"
 #include "uwm_bar.h"
+#include <wlr/config.h>
 
 void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (toplevel == NULL) {
@@ -24,13 +25,13 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	struct uwm_server *server = toplevel->server;
 	struct wlr_seat *seat = server->seat;
 	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
-	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	struct wlr_surface *surface = toplevel_surface(toplevel);
 	if (prev_surface == surface) {
 		return;
 	}
 
-	const char *new_app_id = toplevel->xdg_toplevel->app_id;
-	const char *new_title = toplevel->xdg_toplevel->title;
+	const char *new_app_id = toplevel_app_id(toplevel);
+	const char *new_title = toplevel_title(toplevel);
 	wlr_log(WLR_DEBUG, "FOCUS: new app_id=%s title=%s",
 		new_app_id ? new_app_id : "(nil)", new_title ? new_title : "(nil)");
 	if (prev_surface) {
@@ -40,13 +41,15 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			struct wlr_scene_tree *prev_tree = prev_toplevel->base->data;
 			if (prev_tree) {
 				struct uwm_toplevel *prev = prev_tree->node.data;
-				if (prev) {
-					if (prev->foreign_toplevel)
-						wlr_foreign_toplevel_handle_v1_set_activated(
-							prev->foreign_toplevel, false);
-				}
+				if (prev) toplevel_set_activated(prev, false);
 			}
 		}
+#if WLR_HAS_XWAYLAND
+		else {
+			struct wlr_xwayland_surface *prev_xs = wlr_xwayland_surface_try_from_wlr_surface(prev_surface);
+			if (prev_xs) wlr_xwayland_surface_activate(prev_xs, false);
+		}
+#endif
 	}
 
 	struct uwm_workspace *ws = toplevel->workspace;
@@ -94,9 +97,9 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			int w = o->usable_area.width - 2 * ogap;
 			int h = o->usable_area.height - 2 * ogap;
 			wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
-			if (toplevel->xdg_toplevel->base->current.geometry.width != w
-					|| toplevel->xdg_toplevel->base->current.geometry.height != h)
-				wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, w, h);
+			struct wlr_box cur = toplevel_geometry(toplevel);
+			if (cur.width != w || cur.height != h)
+				toplevel_set_size(toplevel, w, h);
 		}
 	}
 
@@ -108,20 +111,26 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&server->toplevels, &toplevel->link);
-	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
-	if (toplevel->foreign_toplevel)
-		wlr_foreign_toplevel_handle_v1_set_activated(
-			toplevel->foreign_toplevel, true);
-	if (toplevel->decoration) {
+	toplevel_set_activated(toplevel, true);
+	if (toplevel->decoration && toplevel->type == UWM_TOPLEVEL_XDG) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	}
+#if WLR_HAS_XWAYLAND
+	/* Sway parity: seat_send_focus (input/seat.c:194) sets the XWayland seat
+	 * on every XWayland focus so the XWM receives the current keymap. UWM
+	 * previously only did this for override-redirect (xwayland_toplevel_map:870),
+	 * leaving the X server without a keymap → “Failed to compile keymap”. */
+	if (toplevel->type == UWM_TOPLEVEL_XWAYLAND && server->xwayland) {
+		wlr_xwayland_set_seat(server->xwayland, server->seat);
+	}
+#endif
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	if (keyboard != NULL) {
 		wlr_log(WLR_DEBUG, "KEYBOARD_ENTER: surface=%p app_id=%s title=%s",
 			(void *)surface,
-			toplevel->xdg_toplevel->app_id ? toplevel->xdg_toplevel->app_id : "(nil)",
-			toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "(nil)");
+			toplevel_app_id(toplevel) ? toplevel_app_id(toplevel) : "(nil)",
+			toplevel_title(toplevel) ? toplevel_title(toplevel) : "(nil)");
 		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 	}
@@ -132,8 +141,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	 * pointer focus already tracks it (real motion keeps it current), so skip
 	 * the scene lookup and enter re-delivery.
 	 * Skip during interactive move/resize to avoid fighting the user. */
-	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
-		struct wlr_box geo = toplevel->xdg_toplevel->base->geometry;
+	/* 1.5 fix: don't warp on every focus when focus_follows_pointer.
+	 * Warp is surprising and doubles motion events. Only warp when
+	 * focus_follows_pointer is off (explicit keyboard focus). */
+	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH && !ws->focus_follows_pointer) {
+		struct wlr_box geo = toplevel_geometry(toplevel);
 		double wx = toplevel->scene_tree->node.x + geo.x;
 		double wy = toplevel->scene_tree->node.y + geo.y;
 		double ww = geo.width;
@@ -209,28 +221,6 @@ struct uwm_toplevel *desktop_toplevel_at(
 	return result;
 }
 
-bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
-	struct wlr_xdg_toplevel *xdt = toplevel->xdg_toplevel;
-
-	if (xdt->parent) {
-		return false;
-	}
-
-	if (xdt->current.min_width == 0 && xdt->current.min_height == 0
-			&& xdt->current.max_width == 0 && xdt->current.max_height == 0) {
-		return false;
-	}
-
-	/* Fixed-size windows (min == max) are likely dialogs, float them */
-	if (xdt->current.min_width > 0 && xdt->current.min_height > 0
-			&& xdt->current.min_width == xdt->current.max_width
-			&& xdt->current.min_height == xdt->current.max_height) {
-		return false;
-	}
-
-	return true;
-}
-
 static void handle_foreign_toplevel_request_activate(
 		struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(
@@ -243,8 +233,7 @@ static void handle_foreign_toplevel_request_close(
 		struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(
 		listener, toplevel, foreign_toplevel_request_close);
-	if (toplevel && toplevel->xdg_toplevel)
-		wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+	toplevel_send_close(toplevel);
 }
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
@@ -403,12 +392,11 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	int x, y, w, h;
 	get_output_size(ws, &x, &y, &w, &h);
-	bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
 
-	if (toplevel->fullscreen) {
+	bool was_fullscreen = toplevel->fullscreen;
+	if (was_fullscreen) {
 		toplevel->fullscreen = false;
 		ws->fullscreen_window = NULL;
-
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
@@ -428,47 +416,37 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	bool focus_was_displaced = (ws->focused == toplevel);
 	if (focus_was_displaced) {
 		ws->focused = NULL;
-
-		if (bsp_sibling) {
-			ws->focused = bsp_sibling;
-		}
-
+		if (bsp_sibling) ws->focused = bsp_sibling;
 		if (!ws->focused) {
 			struct uwm_toplevel *candidate;
-			wl_list_for_each(candidate, &ws->toplevels, workspace_link) {
-				ws->focused = candidate;
-				break;
-			}
+			wl_list_for_each(candidate, &ws->toplevels, workspace_link) { ws->focused = candidate; break; }
 		}
-
 		if (!ws->focused && !wl_list_empty(&ws->floating_windows)) {
-			struct uwm_toplevel *candidate = wl_container_of(
-				ws->floating_windows.next, candidate, floating_link);
+			struct uwm_toplevel *candidate = wl_container_of(ws->floating_windows.next, candidate, floating_link);
 			ws->focused = candidate;
 		}
 	}
 
+	/* 1.10 fix: coalesce bsp_arrange to single call after fullscreen/monocle state settled */
+	bool will_exit_monocle = false;
 	if (ws->monocle) {
 		int tiled_count = 0;
 		struct uwm_toplevel *_tl;
-		wl_list_for_each(_tl, &ws->toplevels, workspace_link) {
-			tiled_count++;
-		}
-		if (tiled_count <= 1) {
-			ws->monocle = false;
-			if (ws->root) {
-				bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
-				set_children_visible(ws->root, true);
-			}
-		} else if (focus_was_displaced && ws->focused) {
-			bsp_arrange_workspace(ws);
-		}
+		wl_list_for_each(_tl, &ws->toplevels, workspace_link) tiled_count++;
+		if (tiled_count <= 1) will_exit_monocle = true;
+	}
+	if (will_exit_monocle) ws->monocle = false;
+	/* single arrange */
+	if (ws->root) bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
+	if (will_exit_monocle && ws->root) set_children_visible(ws->root, true);
+	else if (ws->monocle && focus_was_displaced && ws->focused) {
+		/* monocle with many windows: ensure focused visible; bsp_arrange already done */
 	}
 
 	if (focus_was_displaced && ws->focused) {
 		wlr_log(WLR_DEBUG, "UNMAP: restoring focus to app_id=%s title=%s",
-			ws->focused->xdg_toplevel->app_id ? ws->focused->xdg_toplevel->app_id : "(nil)",
-			ws->focused->xdg_toplevel->title ? ws->focused->xdg_toplevel->title : "(nil)");
+			toplevel_app_id(ws->focused) ? toplevel_app_id(ws->focused) : "(nil)",
+			toplevel_title(ws->focused) ? toplevel_title(ws->focused) : "(nil)");
 		focus_toplevel(ws->focused);
 	} else if (!ws->focused) {
 		wlr_log(WLR_DEBUG, "UNMAP: no focused window, clearing keyboard focus");
@@ -506,20 +484,25 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 	}
 
-	if (toplevel->ext_foreign_toplevel) {
-		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
-			.title = toplevel->xdg_toplevel->title,
-			.app_id = toplevel->xdg_toplevel->app_id,
-		};
-		wlr_ext_foreign_toplevel_handle_v1_update_state(
-			toplevel->ext_foreign_toplevel, &state);
-	}
-
-	if (toplevel->foreign_toplevel) {
-		wlr_foreign_toplevel_handle_v1_set_title(
-			toplevel->foreign_toplevel, toplevel->xdg_toplevel->title);
-		wlr_foreign_toplevel_handle_v1_set_app_id(
-			toplevel->foreign_toplevel, toplevel->xdg_toplevel->app_id);
+	const char *cur_title = toplevel->xdg_toplevel->title;
+	const char *cur_app = toplevel->xdg_toplevel->app_id;
+	bool title_changed = (cur_title == NULL && toplevel->last_title != NULL) ||
+		(cur_title != NULL && toplevel->last_title == NULL) ||
+		(cur_title && toplevel->last_title && strcmp(cur_title, toplevel->last_title) != 0);
+	bool app_changed = (cur_app == NULL && toplevel->last_app_id != NULL) ||
+		(cur_app != NULL && toplevel->last_app_id == NULL) ||
+		(cur_app && toplevel->last_app_id && strcmp(cur_app, toplevel->last_app_id) != 0);
+	if (title_changed || app_changed) {
+		free(toplevel->last_title); toplevel->last_title = cur_title ? strdup(cur_title) : NULL;
+		free(toplevel->last_app_id); toplevel->last_app_id = cur_app ? strdup(cur_app) : NULL;
+		if (toplevel->ext_foreign_toplevel) {
+			struct wlr_ext_foreign_toplevel_handle_v1_state state = { .title = cur_title, .app_id = cur_app };
+			wlr_ext_foreign_toplevel_handle_v1_update_state(toplevel->ext_foreign_toplevel, &state);
+		}
+		if (toplevel->foreign_toplevel) {
+			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel, cur_title);
+			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, cur_app);
+		}
 	}
 }
 
@@ -555,6 +538,8 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		wlr_scene_node_destroy(&toplevel->image_capture_scene->tree.node);
 		toplevel->image_capture_scene = NULL;
 	}
+	free(toplevel->last_title);
+	free(toplevel->last_app_id);
 
 	if (toplevel == toplevel->server->grabbed_toplevel)
 		reset_cursor_mode(toplevel->server);
@@ -655,6 +640,7 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = calloc(1, sizeof(*toplevel));
 	if (!toplevel)
 		return;
+	toplevel->type = UWM_TOPLEVEL_XDG;
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
@@ -688,67 +674,4 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	wl_signal_add(&xdg_toplevel->events.request_maximize, &toplevel->request_maximize);
 	toplevel->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
 	wl_signal_add(&xdg_toplevel->events.request_fullscreen, &toplevel->request_fullscreen);
-}
-
-static void xdg_popup_commit(struct wl_listener *listener, void *data) {
-	struct uwm_popup *popup = wl_container_of(listener, popup, commit);
-
-	if (popup->xdg_popup->base->initial_commit) {
-		wlr_xdg_surface_schedule_configure(popup->xdg_popup->base);
-	}
-}
-
-static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
-	struct uwm_popup *popup = wl_container_of(listener, popup, destroy);
-
-	wl_list_remove(&popup->commit.link);
-	wl_list_remove(&popup->destroy.link);
-
-	free(popup);
-}
-
-void server_new_xdg_popup(struct wl_listener *listener, void *data) {
-	struct wlr_xdg_popup *xdg_popup = data;
-
-	struct uwm_popup *popup = calloc(1, sizeof(*popup));
-	if (!popup)
-		return;
-	popup->xdg_popup = xdg_popup;
-
-	/* Wire listeners FIRST so the client always receives a configure
-	 * event on commit. If scene-tree setup fails below, the popup
-	 * won't render but the client will not hang. */
-	popup->commit.notify = xdg_popup_commit;
-	wl_signal_add(&xdg_popup->base->surface->events.commit, &popup->commit);
-
-	popup->destroy.notify = xdg_popup_destroy;
-	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
-
-	struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent);
-	if (!parent)
-		return;
-	struct wlr_scene_tree *parent_tree = parent->data;
-	xdg_popup->base->data = wlr_scene_xdg_surface_create(parent_tree, xdg_popup->base);
-	if (!xdg_popup->base->data)
-		return;
-
-	/* Find the parent toplevel and its output, then unconstrain the
-	 * popup to the output's bounds so context menus near the screen
-	 * edge are repositioned by wlroots to stay on-screen. */
-	struct uwm_toplevel *toplevel = NULL;
-	struct wlr_scene_tree *tree = parent_tree;
-	while (tree && !tree->node.data)
-		tree = tree->node.parent;
-	if (tree)
-		toplevel = tree->node.data;
-	if (toplevel && toplevel->workspace && toplevel->workspace->output) {
-		struct uwm_output *output = toplevel->workspace->output;
-		struct wlr_box box = {
-			.x = output->lx,
-			.y = output->ly,
-			.width = output->wlr_output->width,
-			.height = output->wlr_output->height,
-		};
-		wlr_xdg_popup_unconstrain_from_box(xdg_popup, &box);
-	}
 }

@@ -5,16 +5,16 @@ CFLAGS_PKG_CONFIG!=$(PKG_CONFIG) --cflags $(PKGS)
 
 LIBS!=$(PKG_CONFIG) --libs $(PKGS)
 
-SRC = $(wildcard src/*.c)
-OBJ = $(patsubst src/%.c,output/%.o,$(SRC))
+SRC = $(shell find src -name '*.c')
+OBJ = $(patsubst src/%.c,build/%.o,$(SRC))
 
 PROTO_SRC = protocol/wlr-layer-shell-unstable-v1-protocol.c \
-            protocol/uwm-bar-unstable-v1-protocol.c
-PROTO_OBJ = $(PROTO_SRC:.c=.o)
+            protocol/uwm-bar-unstable-v1-protocol.c \
+            protocol/xdg-shell-protocol.c
+PROTO_OBJ = $(patsubst protocol/%.c,build/protocol/%.o,$(PROTO_SRC))
 
-XDG_PROTO_OBJ = xdg-shell-protocol.o
-
-BASE_FLAGS = -Werror -Iinclude -I. -Iprotocol -DWLR_USE_UNSTABLE
+BASE_FLAGS = -Werror -Iinclude -Iinclude/core -Iinclude/input -Iinclude/output \
+             -Iinclude/shell -Iinclude/ui -Iinclude/wm -I. -Iprotocol -DWLR_USE_UNSTABLE
 
 ifdef ASAN
 CFLAGS = -g -fsanitize=address -fno-omit-frame-pointer -O0
@@ -25,25 +25,31 @@ CFLAGS = -O3 -DNDEBUG -march=native -flto
 LDFLAGS = -flto
 endif
 
-all: config.h uwm
+BIN = build/uwm
+
+all: config.h $(BIN)
 
 config.h: config.def.h
 	cp config.def.h config.h
 
 $(OBJ): config.h
+$(PROTO_OBJ): config.h
 
-output/%.o: src/%.c
-	mkdir -p output
+build/%.o: src/%.c
+	mkdir -p $(dir $@)
 	$(CC) -c $< $(CFLAGS_PKG_CONFIG) $(BASE_FLAGS) $(CFLAGS) -o $@
 
-%.o: %.c
+build/protocol/%.o: protocol/%.c
+	mkdir -p $(dir $@)
 	$(CC) -c $< $(CFLAGS_PKG_CONFIG) $(BASE_FLAGS) $(CFLAGS) -o $@
 
-uwm: $(OBJ) $(PROTO_OBJ) $(XDG_PROTO_OBJ)
-	$(CC) $(OBJ) $(PROTO_OBJ) $(XDG_PROTO_OBJ) $(CFLAGS_PKG_CONFIG) $(BASE_FLAGS) $(CFLAGS) $(LDFLAGS) $(LIBS) -o $@
+$(BIN): $(OBJ) $(PROTO_OBJ)
+	mkdir -p $(dir $@)
+	$(CC) $(OBJ) $(PROTO_OBJ) $(CFLAGS_PKG_CONFIG) $(BASE_FLAGS) $(CFLAGS) $(LDFLAGS) $(LIBS) -o $@
+	ln -sf build/uwm uwm
 
 clean:
-	rm -rf uwm output/ protocol/*.o xdg-shell-protocol.o
+	rm -rf build/ output/ uwm protocol/*.o xdg-shell-protocol.o
 
 distclean: clean
 	rm -f config.h

@@ -107,8 +107,7 @@ void toggle_floating(struct uwm_toplevel *window)
 			window->server->floating_layer);
 		wlr_scene_node_set_position(&window->scene_tree->node,
 			window->float_x, window->float_y);
-		wlr_xdg_toplevel_set_size(window->xdg_toplevel,
-			window->float_width, window->float_height);
+		toplevel_set_size(window, window->float_width, window->float_height);
 
 		raise_floating(window);
 
@@ -200,15 +199,15 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 		int fs_w = output ? output->wlr_output->width : 0;
 		int fs_h = output ? output->wlr_output->height : 0;
 		wlr_scene_node_set_position(&window->scene_tree->node, 0, 0);
-		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, true);
-		wlr_xdg_toplevel_set_size(window->xdg_toplevel, fs_w, fs_h);
+		toplevel_set_fullscreen(window, true);
+		toplevel_set_size(window, fs_w, fs_h);
 
 		wlr_scene_node_raise_to_top(&window->scene_tree->node);
 
 	} else {
 		window->fullscreen = false;
 		ws->fullscreen_window = NULL;
-		wlr_xdg_toplevel_set_fullscreen(window->xdg_toplevel, false);
+		toplevel_set_fullscreen(window, false);
 
 		/* Restore geometry BEFORE showing other windows so the
 		 * scene doesn't render the fullscreen window at full size
@@ -227,8 +226,7 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 				window->server->floating_layer);
 			wlr_scene_node_set_position(&window->scene_tree->node,
 				window->float_x, window->float_y);
-			wlr_xdg_toplevel_set_size(window->xdg_toplevel,
-				window->float_width, window->float_height);
+			toplevel_set_size(window, window->float_width, window->float_height);
 		} else {
 			wlr_scene_node_reparent(
 				&window->scene_tree->node,

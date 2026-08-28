@@ -29,6 +29,8 @@ struct uwm_keyboard {
 void reset_cursor_mode(struct uwm_server *server);
 void begin_interactive(struct uwm_toplevel *toplevel, enum uwm_cursor_mode mode, uint32_t edges);
 
+extern struct uwm_server *uwm_server;
+
 void server_new_input(struct wl_listener *listener, void *data);
 void seat_request_cursor(struct wl_listener *listener, void *data);
 void seat_pointer_focus_change(struct wl_listener *listener, void *data);

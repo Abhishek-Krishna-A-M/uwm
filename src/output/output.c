@@ -87,6 +87,11 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 		}
 	}
 
+	/* F5 fix: clean up lock surface destroy listener if locked on this output */
+	if (output->lock_surface) {
+		wl_list_remove(&output->lock_surface_destroy.link);
+		output->lock_surface = NULL;
+	}
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
 	wl_list_remove(&output->destroy.link);
@@ -163,11 +168,21 @@ void handle_output_layout_change(struct wl_listener *listener, void *data) {
 		wlr_scene_node_set_position(&output->layer_overlay->node, box.x, box.y);
 		wlr_scene_node_set_position(&output->layer_lock->node, box.x, box.y);
 
-		/* Reposition lock surface if present */
+		/* Reposition lock surface if present — F2 fix: 0,0 relative to layer_lock (already at lx,ly) */
 		if (output->lock_surface && output->lock_surface->surface->data) {
 			struct wlr_scene_tree *tree =
 				output->lock_surface->surface->data;
-			wlr_scene_node_set_position(&tree->node, box.x, box.y);
+			wlr_scene_node_set_position(&tree->node, 0, 0);
+		}
+		/* F4 fix: re-arrange layer surfaces on geometry change (mirror/extend) */
+		layer_surface_arrange(output);
+		/* also re-arrange tiled windows to new usable area */
+		struct uwm_workspace *ws = &server->workspaces.workspaces[output->current_workspace];
+		if (ws->root) {
+			bsp_arrange(ws, output->lx + output->usable_area.x,
+				output->ly + output->usable_area.y,
+				output->usable_area.width, output->usable_area.height,
+				server->config.inner_gap);
 		}
 	}
 
@@ -305,8 +320,21 @@ void server_new_output(struct wl_listener *listener, void *data) {
 		wlr_output_state_set_mode(&state, mode);
 	}
 
-	wlr_output_commit_state(wlr_output, &state);
+	bool ok = wlr_output_commit_state(wlr_output, &state);
 	wlr_output_state_finish(&state);
+	if (!ok) {
+		wlr_log(WLR_ERROR, "output %s: initial commit failed", wlr_output->name);
+		/* try to continue without preferred mode if it failed */
+		struct wlr_output_state fallback;
+		wlr_output_state_init(&fallback);
+		wlr_output_state_set_enabled(&fallback, true);
+		if (!wlr_output_commit_state(wlr_output, &fallback)) {
+			wlr_log(WLR_ERROR, "output %s: fallback commit also failed, aborting", wlr_output->name);
+			wlr_output_state_finish(&fallback);
+			return;
+		}
+		wlr_output_state_finish(&fallback);
+	}
 
 	struct uwm_output *output = calloc(1, sizeof(*output));
 	if (!output)
@@ -389,7 +417,7 @@ void server_new_output(struct wl_listener *listener, void *data) {
 	output->ly = box.y;
 
 	/* Offset per-output layer trees to this output's position in the layout.
-	 * Layer surfaces (swaybg, ubar) position relative to their subtree root,
+	 * Layer surfaces position relative to their subtree root,
 	 * so the subtree root must be at (lx, ly) for the layer to render within
 	 * this output's viewport. */
 	wlr_scene_node_set_position(&output->layer_background->node, output->lx, output->ly);

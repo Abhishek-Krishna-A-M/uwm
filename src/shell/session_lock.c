@@ -26,7 +26,8 @@ static void handle_new_lock_surface(struct wl_listener *listener, void *data) {
 	}
 	lock_surface->surface->data = scene_tree;
 
-	wlr_scene_node_set_position(&scene_tree->node, output->lx, output->ly);
+	/* F2 fix: 0,0 relative to output->layer_lock which is already at lx,ly */
+	wlr_scene_node_set_position(&scene_tree->node, 0, 0);
 	wlr_session_lock_surface_v1_configure(lock_surface,
 		output->wlr_output->width, output->wlr_output->height);
 

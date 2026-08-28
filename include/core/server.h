@@ -29,6 +29,10 @@
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
+#include <wlr/config.h>
+#if WLR_HAS_XWAYLAND
+#include <wlr/xwayland.h>
+#endif
 #include "config.h"
 #include "workspace.h"
 #include "layer_shell.h"
@@ -99,6 +103,10 @@ struct uwm_server {
 	struct wlr_box grab_geobox;
 	uint32_t resize_edges;
 	uint32_t last_button_serial;
+	/* resize coalesce — fix 1.1 */
+	bool pending_resize;
+	int pending_x, pending_y, pending_w, pending_h;
+	uint32_t last_resize_msec;
 
 	struct wlr_output_layout *output_layout;
 	struct wl_list outputs;
@@ -147,6 +155,7 @@ struct uwm_server {
 	/* Transient seat protocol support */
 	struct wlr_transient_seat_manager_v1 *transient_seat_manager;
 	struct wl_listener transient_seat_create;
+	struct wl_list transient_seats; /* list of wlr_seat* for leak fix 1.7 */
 
 	/* UWM bar protocol */
 	struct uwm_bar_manager *bar_manager;
@@ -154,6 +163,14 @@ struct uwm_server {
 
 	/* Session lock protocol */
 	struct uwm_session_lock session_lock;
+
+#if WLR_HAS_XWAYLAND
+	/* XWayland — only active when uwm -x (immediate) */
+	struct wlr_xwayland *xwayland;
+	struct wl_listener xwayland_surface;
+	struct wl_listener xwayland_ready;
+	bool xwayland_enabled;
+#endif
 };
 
 bool server_init(struct uwm_server *server);

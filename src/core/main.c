@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <wlr/util/log.h>
+#include <wlr/config.h>
 #include <wayland-server-core.h>
 #include "server.h"
 #include "config.h"
@@ -160,23 +161,36 @@ int main(int argc, char *argv[]) {
 	wlr_log_init(getenv("UWM_DEBUG") ? WLR_DEBUG : WLR_ERROR, NULL);
 	char *startup_cmd = NULL;
 
+	bool enable_xwayland = false;
 	int c;
-	while ((c = getopt(argc, argv, "s:h")) != -1) {
+	while ((c = getopt(argc, argv, "s:xh")) != -1) {
 		switch (c) {
 		case 's':
 			startup_cmd = optarg;
 			break;
+		case 'x':
+			enable_xwayland = true;
+			break;
 		default:
-			printf("Usage: %s [-s startup command]\n", argv[0]);
+			printf("Usage: %s [-s startup command] [-x]\n", argv[0]);
+			printf("  -x  enable XWayland (lazy, sets DISPLAY)\n");
 			return 0;
 		}
 	}
 	if (optind < argc) {
-		printf("Usage: %s [-s startup command]\n", argv[0]);
+		printf("Usage: %s [-s startup command] [-x]\n", argv[0]);
 		return 0;
 	}
 
 	struct uwm_server server = {0};
+#if WLR_HAS_XWAYLAND
+	server.xwayland_enabled = enable_xwayland;
+#else
+	if (enable_xwayland) {
+		fprintf(stderr, "uwm: XWayland not compiled in (WLR_HAS_XWAYLAND=0)\n");
+		return 1;
+	}
+#endif
 
 	if (!server_init(&server)) {
 		return 1;

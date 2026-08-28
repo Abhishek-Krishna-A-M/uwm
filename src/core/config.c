@@ -5,8 +5,8 @@
 /* ========== Include user configuration ==========
  * config.def.h provides defaults, config.h overrides them.
  * Order matters: config.h can #undef and redefine macros. */
-#include "../config.def.h"
-#include "../config.h"
+#include "../../config.def.h"
+#include "../../config.h"
 
 /* ========== Exported configuration globals ========== */
 
