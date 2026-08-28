@@ -62,16 +62,33 @@ static void workspace_hide(struct uwm_workspace *ws)
 	if (ws->fullscreen_window) {
 		wlr_scene_node_set_enabled(
 			&ws->fullscreen_window->scene_tree->node, false);
+		toplevel_update_border(ws->fullscreen_window);
 		return;
 	}
 	struct uwm_toplevel *toplevel;
 	wl_list_for_each(toplevel, &ws->toplevels, workspace_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
+		if (toplevel->border_top)
+			wlr_scene_node_set_enabled(&toplevel->border_top->node, false);
+		if (toplevel->border_bottom)
+			wlr_scene_node_set_enabled(&toplevel->border_bottom->node, false);
+		if (toplevel->border_left)
+			wlr_scene_node_set_enabled(&toplevel->border_left->node, false);
+		if (toplevel->border_right)
+			wlr_scene_node_set_enabled(&toplevel->border_right->node, false);
 	}
 	wl_list_for_each(toplevel, &ws->floating_windows, floating_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
+		if (toplevel->border_top)
+			wlr_scene_node_set_enabled(&toplevel->border_top->node, false);
+		if (toplevel->border_bottom)
+			wlr_scene_node_set_enabled(&toplevel->border_bottom->node, false);
+		if (toplevel->border_left)
+			wlr_scene_node_set_enabled(&toplevel->border_left->node, false);
+		if (toplevel->border_right)
+			wlr_scene_node_set_enabled(&toplevel->border_right->node, false);
 	}
 }
 
@@ -95,6 +112,7 @@ static void workspace_show(struct uwm_workspace *ws)
 	if (ws->fullscreen_window) {
 		wlr_scene_node_set_enabled(
 			&ws->fullscreen_window->scene_tree->node, true);
+		toplevel_update_border(ws->fullscreen_window);
 		return;
 	}
 	struct uwm_toplevel *toplevel;
@@ -114,6 +132,7 @@ static void workspace_show(struct uwm_workspace *ws)
 	if (!ws->monocle && ws->root) {
 		restore_container_visibility(ws->root);
 	}
+	workspace_update_borders(ws);
 }
 
 void workspace_show_on_output(struct uwm_workspace *ws,
