@@ -6,7 +6,17 @@ LDLIBS  = $(shell pkg-config --libs wayland-client cairo pango pangocairo xkbcom
 
 WAYLAND_SCANNER ?= wayland-scanner
 
-SRC = src/ulaunch.c src/render.c src/input.c src/filter.c src/theme.c src/mode_dmenu.c src/mode_drun.c
+SRC = $(wildcard src/*.c)
+OBJ = $(patsubst src/%.c,build/%.o,$(SRC))
+
+PROTO_SRC = protocol/wlr-layer-shell-unstable-v1-client-protocol.c \
+            protocol/ext-foreign-toplevel-list-v1-client-protocol.c \
+            protocol/xdg-shell-client-protocol.c
+PROTO_OBJ = $(patsubst protocol/%.c,build/protocol/%.o,$(PROTO_SRC))
+
+PROTO_HDR = protocol/wlr-layer-shell-unstable-v1-client-protocol.h \
+            protocol/ext-foreign-toplevel-list-v1-client-protocol.h \
+            protocol/xdg-shell-client-protocol.h
 
 WLR_PROTO = protocol/wlr-layer-shell-unstable-v1-client-protocol.h \
             protocol/wlr-layer-shell-unstable-v1-client-protocol.c
@@ -33,11 +43,19 @@ $(XDG_PROTO): /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml
 	$(WAYLAND_SCANNER) client-header < $< > protocol/xdg-shell-client-protocol.h
 	$(WAYLAND_SCANNER) private-code < $< > protocol/xdg-shell-client-protocol.c
 
-ulaunch: $(SRC) $(PROTOCOLS)
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(PROTOCOLS) $(LDLIBS)
+build/%.o: src/%.c $(PROTO_HDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/protocol/%.o: protocol/%.c $(PROTO_HDR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+ulaunch: $(OBJ) $(PROTO_OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ) $(PROTO_OBJ) $(LDLIBS)
 
 clean:
-	rm -f ulaunch
+	rm -rf build ulaunch
 	rm -f protocol/wlr-layer-shell-unstable-v1-client-protocol.h protocol/wlr-layer-shell-unstable-v1-client-protocol.c
 	rm -f protocol/ext-foreign-toplevel-list-v1-client-protocol.h protocol/ext-foreign-toplevel-list-v1-client-protocol.c
 	rm -f protocol/xdg-shell-client-protocol.h protocol/xdg-shell-client-protocol.c
