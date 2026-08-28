@@ -13,8 +13,8 @@
 
 #define ITEM_GAP 12
 #define EDGE_PAD 12
-#define WS_PAD 8
-#define WS_GAP 10
+#define WS_PAD 10
+#define WS_GAP 12
 #define BLOCK_GAP 20
 #define UNDERLINE_SIZE 3
 
@@ -214,11 +214,11 @@ void render_frame(State *state) {
 		/* separator: original adds 4 + line + 10 =14 */
 		left_w += 14;
 	}
-	/* title – must mirror drawing logic with ellipsize 400 */
+	/* title – must mirror drawing logic with ellipsize 280 (~28 chars) */
 	int title_tw = 0;
 	if (state->focused_title[0]) {
 		pango_layout_set_text(layout, state->focused_title, -1);
-		pango_layout_set_width(layout, 400 * PANGO_SCALE);
+		pango_layout_set_width(layout, 280 * PANGO_SCALE);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 		int tw, th;
 		pango_layout_get_pixel_size(layout, &tw, &th);
@@ -316,7 +316,7 @@ void render_frame(State *state) {
 
 	if (state->focused_title[0]) {
 		pango_layout_set_text(layout, state->focused_title, -1);
-		pango_layout_set_width(layout, 400 * PANGO_SCALE);
+		pango_layout_set_width(layout, 280 * PANGO_SCALE);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 
 		int tw, th;
