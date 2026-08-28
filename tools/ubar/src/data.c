@@ -60,7 +60,7 @@ bool data_update_clock(State *state) {
 	state->prev_minute = tm.tm_min;
 
 	if (state->time_detailed)
-		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M:%S %p", &tm);
+		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M %p", &tm);
 	else
 		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M %p", &tm);
 	return true;

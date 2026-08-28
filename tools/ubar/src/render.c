@@ -13,7 +13,8 @@
 
 #define ITEM_GAP 12
 #define EDGE_PAD 12
-#define WS_GAP 14
+#define WS_PAD 8
+#define WS_GAP 10
 #define BLOCK_GAP 20
 #define UNDERLINE_SIZE 3
 
@@ -206,7 +207,7 @@ void render_frame(State *state) {
 		snprintf(ws_str, sizeof(ws_str), "%d", state->workspaces[i].id + 1);
 		int tw;
 		text_extents(layout, ws_str, &tw, NULL);
-		left_w += tw + WS_GAP;
+		left_w += tw + 2 * WS_PAD + WS_GAP;
 	}
 	bool has_ws = left_w > 0;
 	if (has_ws) {
@@ -279,26 +280,28 @@ void render_frame(State *state) {
 
 		int tw, th;
 		text_extents(layout, ws_str, &tw, &th);
+		int padded_w = tw + 2 * WS_PAD;
 
 		uint32_t tc = active ? state->ws_focused_text : state->ws_inactive_text;
-		draw_text(layout, cr, lx, h, ws_str, tc);
+		draw_text(layout, cr, lx + WS_PAD, h, ws_str, tc);
 
-		/* underline for focused workspace – polybar line-size 3 line-color primary */
+		/* underline for focused workspace – polybar line-size 3 line-color primary
+		 * spans padded width so it has breathing room like label padding=2 */
 		if (active) {
 			cairo_set_source_hex(cr, state->ws_focused_text);
-			cairo_rectangle(cr, lx, h - UNDERLINE_SIZE, tw, UNDERLINE_SIZE);
+			cairo_rectangle(cr, lx, h - UNDERLINE_SIZE, padded_w, UNDERLINE_SIZE);
 			cairo_fill(cr);
 		}
 
 		if (zone_idx < MAX_ZONES) {
 			state->zones[zone_idx].x = lx;
-			state->zones[zone_idx].width = tw;
+			state->zones[zone_idx].width = padded_w;
 			state->zones[zone_idx].type = ZONE_WORKSPACE;
 			state->zones[zone_idx].data = state->workspaces[i].id;
 			zone_idx++;
 		}
 
-		lx += tw + WS_GAP;
+		lx += padded_w + WS_GAP;
 	}
 
 	if (has_ws) {
