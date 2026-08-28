@@ -16,8 +16,21 @@ static void bsp_node_apply_geometry(struct uwm_bsp_node *node)
 		wlr_scene_node_set_position(
 			&node->toplevel->scene_tree->node, node->x, node->y);
 	struct wlr_box geo = toplevel_geometry(node->toplevel);
-	if (node->width != geo.width || node->height != geo.height) {
-		toplevel_set_size(node->toplevel, node->width, node->height);
+	if (node->width != geo.width || node->height != geo.height
+#if WLR_HAS_XWAYLAND
+			|| (node->toplevel->type == UWM_TOPLEVEL_XWAYLAND && node->toplevel->xwayland_surface
+				&& (node->toplevel->xwayland_surface->x != node->x || node->toplevel->xwayland_surface->y != node->y))
+#endif
+	) {
+#if WLR_HAS_XWAYLAND
+		if (node->toplevel->type == UWM_TOPLEVEL_XWAYLAND && node->toplevel->xwayland_surface) {
+			wlr_xwayland_surface_configure(node->toplevel->xwayland_surface,
+				node->x, node->y, node->width, node->height);
+		} else
+#endif
+		{
+			toplevel_set_size(node->toplevel, node->width, node->height);
+		}
 		if (node->toplevel->type == UWM_TOPLEVEL_XDG && node->toplevel->xdg_toplevel)
 			wlr_xdg_toplevel_set_tiled(node->toplevel->xdg_toplevel,
 				WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
@@ -112,9 +125,6 @@ static void bsp_arrange_node(
 
 void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int height, int gap)
 {
-	if (workspace->root == NULL)
-		return;
-
 	if (!workspace->output)
 		return;
 
@@ -127,55 +137,63 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 	if (width < 1) width = 1;
 	if (height < 1) height = 1;
 
-	if (workspace->monocle && workspace->focused) {
+	if (workspace->root == NULL) {
 		struct uwm_toplevel *tl;
-		int tiled = 0;
-		wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
-			if (!tl->floating && !tl->fullscreen)
-				tiled++;
-		}
-
-		if (tiled > workspace->output->server->config.monocle_presave_max_windows) {
-			wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
-				if (tl != workspace->focused && !tl->floating
-						&& !tl->fullscreen)
-					wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
-			}
-			bsp_arrange_node(workspace->root, x, y, width, height, gap);
-			wlr_scene_node_set_position(
-				&workspace->focused->scene_tree->node, x, y);
-			{
-				struct wlr_box g = toplevel_geometry(workspace->focused);
-				if (g.width != width || g.height != height)
-					toplevel_set_size(workspace->focused, width, height);
-			}
-			wlr_scene_node_set_enabled(
-				&workspace->focused->scene_tree->node, true);
-		} else {
-			wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
-				if (tl->floating || tl->fullscreen)
-					continue;
-				wlr_scene_node_set_position(&tl->scene_tree->node, x, y);
-				{
-					struct wlr_box g = toplevel_geometry(tl);
-					if (g.width != width || g.height != height)
-						toplevel_set_size(tl, width, height);
-				}
-				wlr_scene_node_set_enabled(&tl->scene_tree->node,
-					tl == workspace->focused);
-			}
-			bsp_arrange_node(workspace->root, x, y, width, height, gap);
-			wlr_scene_node_set_enabled(
-				&workspace->focused->scene_tree->node, true);
-		}
 		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			wlr_scene_node_set_position(&tl->scene_tree->node, tl->float_x, tl->float_y);
+		}
+		workspace_update_borders(workspace);
+		return;
+	}
+
+	if (workspace->monocle) {
+		struct uwm_toplevel *active_tiled = NULL;
+		if (workspace->focused && !workspace->focused->floating && !workspace->focused->fullscreen) {
+			active_tiled = workspace->focused;
+		} else if (workspace->last_focused && !workspace->last_focused->floating && !workspace->last_focused->fullscreen) {
+			active_tiled = workspace->last_focused;
+		} else {
+			struct uwm_toplevel *tl;
+			wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
+				if (!tl->floating && !tl->fullscreen) {
+					active_tiled = tl;
+					break;
+				}
+			}
+		}
+
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &workspace->toplevels, workspace_link) {
+			if (tl->floating || tl->fullscreen)
+				continue;
+			if (tl == active_tiled) {
+				wlr_scene_node_set_position(&tl->scene_tree->node, x, y);
+				struct wlr_box g = toplevel_geometry(tl);
+				if (g.width != width || g.height != height)
+					toplevel_set_size(tl, width, height);
+				wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			} else {
+				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
+			}
+		}
+		bsp_arrange_node(workspace->root, x, y, width, height, gap);
+		if (active_tiled) {
+			wlr_scene_node_set_position(&active_tiled->scene_tree->node, x, y);
+			wlr_scene_node_set_enabled(&active_tiled->scene_tree->node, true);
+		}
+
+		/* Floating windows remain enabled, untouched at their floating geometry */
+		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			wlr_scene_node_set_position(&tl->scene_tree->node, tl->float_x, tl->float_y);
 		}
 	} else {
 		bsp_arrange_node(workspace->root, x, y, width, height, gap);
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			wlr_scene_node_set_position(&tl->scene_tree->node, tl->float_x, tl->float_y);
 		}
 	}
 	workspace_update_borders(workspace);

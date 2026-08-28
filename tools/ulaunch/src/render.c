@@ -89,6 +89,21 @@ static struct pool_buffer *get_next_buffer(uint32_t width, uint32_t height) {
 	return buf;
 }
 
+static void rounded_rect(cairo_t *cr, double x, double y, double w, double h, double r) {
+	if (r <= 0) {
+		cairo_rectangle(cr, x, y, w, h);
+		return;
+	}
+	if (r > w / 2) r = w / 2;
+	if (r > h / 2) r = h / 2;
+	cairo_new_path(cr);
+	cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
+	cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
+	cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
+	cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI / 2);
+	cairo_close_path(cr);
+}
+
 void render_frame(void) {
 	if (state.width <= 0 || !state.configured) return;
 
@@ -96,20 +111,29 @@ void render_frame(void) {
 	int o_h = state.output_h;
 	int pad = state.theme.padding;
 	int bw = state.theme.border_width;
+	int radius = state.theme.border_radius;
+	int item_pad = state.theme.item_padding;
+	int spacing = state.theme.line_spacing;
 
 	struct pool_buffer *buf = get_next_buffer(o_w, o_h);
 	if (!buf) return;
 
 	cairo_t *cr = buf->cairo;
 
-	/* compute heights from font metrics */
+	/* compute heights from font metrics — rofi-like:
+	 * window { padding 12px; border 2px; width 28%; }
+	 * inputbar { padding 4px 4px 12px 4px; } => prompt_h = font_h + 4 + 12
+	 * element { padding 6px; } => item_h = font_h + 12
+	 * listview { spacing 4px; } => gap between items
+	 */
 	PangoLayout *layout = pango_cairo_create_layout(cr);
 	pango_layout_set_font_description(layout, state.theme.font_desc);
 	int ref_w, ref_h;
 	pango_layout_set_text(layout, "X", -1);
 	pango_layout_get_pixel_size(layout, &ref_w, &ref_h);
-	int item_h = ref_h + 8;
-	int prompt_h = ref_h + 12;
+	int item_h = ref_h + item_pad * 2;          /* rofi element padding 6*2 */
+	int prompt_h = ref_h + 4 + 12;              /* rofi inputbar 4 top +12 bottom */
+	const int prompt_gap = 8;                   /* rofi prompt { padding 0 8 0 0 } */
 
 	int visible = state.theme.max_items;
 	if (visible > state.n_filtered)
@@ -120,7 +144,9 @@ void render_frame(void) {
 	if (state.cursor >= state.visible_start + visible)
 		state.visible_start = state.cursor - visible + 1;
 
-	int list_h = visible * item_h;
+	int list_h = 0;
+	if (visible > 0)
+		list_h = visible * item_h + (visible - 1) * spacing;
 	int box_w = o_w * state.theme.width_pct / 100;
 	if (box_w < 200) box_w = 200;
 	int box_h = prompt_h + SEP_HEIGHT + list_h + pad * 2 + bw * 2;
@@ -135,48 +161,59 @@ void render_frame(void) {
 
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-	/* border */
+	/* border + background with optional rounded corners */
 	cairo_set_hex(cr, state.theme.border_color);
-	cairo_rectangle(cr, bx, by, box_w, box_h);
+	rounded_rect(cr, bx, by, box_w, box_h, radius);
 	cairo_fill(cr);
 
-	/* background */
 	cairo_set_hex(cr, state.theme.bg);
-	cairo_rectangle(cr, bx + bw, by + bw, box_w - bw * 2, box_h - bw * 2);
+	if (radius > 0) {
+		int inner_r = radius - bw;
+		if (inner_r < 0) inner_r = 0;
+		rounded_rect(cr, bx + bw, by + bw, box_w - bw * 2, box_h - bw * 2, inner_r);
+	} else {
+		cairo_rectangle(cr, bx + bw, by + bw, box_w - bw * 2, box_h - bw * 2);
+	}
 	cairo_fill(cr);
 
 	int content_w = box_w - bw * 2 - pad * 2;
 	int x = bx + bw + pad;
 	int y = by + bw + pad;
 
-	/* prompt */
+	/* prompt — emulate inputbar side padding 4px */
+	int bar_pad_side = 4;
+	int ix = x + bar_pad_side;
+	int i_content_w = content_w - bar_pad_side * 2;
+
 	pango_layout_set_text(layout, state.theme.prompt, -1);
 	int pw, ph;
 	pango_layout_get_pixel_size(layout, &pw, &ph);
 
 	cairo_set_hex(cr, state.theme.prompt_color);
-	cairo_move_to(cr, x, y + (prompt_h - ph) / 2.0);
+	cairo_move_to(cr, ix, y + (prompt_h - ph) / 2.0);
 	pango_cairo_show_layout(cr, layout);
 
 	if (state.input_len > 0) {
 		pango_layout_set_text(layout, state.input, -1);
-		pango_layout_set_width(layout, (content_w - pw) * PANGO_SCALE);
+		int avail = i_content_w - pw - prompt_gap;
+		if (avail < 0) avail = 0;
+		pango_layout_set_width(layout, avail * PANGO_SCALE);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 		int iw, ih;
 		pango_layout_get_pixel_size(layout, &iw, &ih);
 		cairo_set_hex(cr, state.theme.fg);
-		cairo_move_to(cr, x + pw, y + (prompt_h - ih) / 2.0);
+		cairo_move_to(cr, ix + pw + prompt_gap, y + (prompt_h - ih) / 2.0);
 		pango_cairo_show_layout(cr, layout);
 		pango_layout_set_width(layout, -1);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
 	}
 
-	/* separator */
+	/* separator — use theme separator_color (with alpha) */
 	int sep_y = y + prompt_h;
-	cairo_set_source_rgba(cr, 1, 1, 1, 0.08);
+	cairo_set_hex(cr, state.theme.separator_color);
 	cairo_set_line_width(cr, SEP_HEIGHT);
-	cairo_move_to(cr, x, sep_y);
-	cairo_line_to(cr, x + content_w, sep_y);
+	cairo_move_to(cr, x, sep_y + 0.5);
+	cairo_line_to(cr, x + content_w, sep_y + 0.5);
 	cairo_stroke(cr);
 
 	/* list */
@@ -188,24 +225,27 @@ void render_frame(void) {
 		int entry_idx = state.filtered[idx];
 		const char *text = state.entries[entry_idx];
 
-		int iy = list_y + i * item_h;
+		int iy = list_y + i * (item_h + spacing);
 		bool selected = (idx == state.cursor);
 
 		if (selected) {
 			cairo_set_hex(cr, state.theme.highlight_bg);
+			/* selection fills full width like rofi element selected, with spacing gaps showing bg */
 			cairo_rectangle(cr, bx + bw, iy, box_w - bw * 2, item_h);
 			cairo_fill(cr);
 		}
 
 		pango_layout_set_text(layout, text, -1);
-		pango_layout_set_width(layout, content_w * PANGO_SCALE);
+		int text_w = content_w - item_pad * 2;
+		if (text_w < 0) text_w = 0;
+		pango_layout_set_width(layout, text_w * PANGO_SCALE);
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 
 		int th;
 		pango_layout_get_pixel_size(layout, NULL, &th);
 
 		cairo_set_hex(cr, selected ? state.theme.highlight_fg : state.theme.fg);
-		cairo_move_to(cr, x, iy + (item_h - th) / 2.0);
+		cairo_move_to(cr, x + item_pad, iy + (item_h - th) / 2.0);
 		pango_cairo_show_layout(cr, layout);
 
 		pango_layout_set_width(layout, -1);

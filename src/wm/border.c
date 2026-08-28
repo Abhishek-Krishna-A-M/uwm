@@ -2,6 +2,7 @@
 #include <wlr/types/wlr_scene.h>
 #include "window.h"
 #include "workspace.h"
+#include "output.h"
 #include "server.h"
 #include "config.h"
 
@@ -70,10 +71,13 @@ void toplevel_destroy_border(struct uwm_toplevel *t) {
 }
 
 static bool should_show_border(struct uwm_toplevel *t) {
-	if (!t || !t->workspace) return false;
+	if (!t || !t->workspace || !t->scene_tree) return false;
+	if (!t->scene_tree->node.enabled) return false;
 	if (t->fullscreen) return false;
-	if (t->workspace->monocle) return false;
+	if (!t->workspace->output) return false;
+	if (t->workspace->output->current_workspace != t->workspace->id) return false;
 	if (t->workspace->focused != t) return false;
+	if (t->workspace->monocle && !t->floating) return false;
 	if (t->floating) return true;
 	/* tiled: only if more than 1 tiled window in workspace */
 	int tiled = 0;

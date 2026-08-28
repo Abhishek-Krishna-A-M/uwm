@@ -16,8 +16,12 @@ typedef struct {
 	uint32_t highlight_fg;
 	uint32_t prompt_color;
 	uint32_t border_color;
+	uint32_t separator_color;
 	int border_width;
+	int border_radius;
 	int padding;
+	int item_padding;
+	int line_spacing;
 	int width_pct;
 	int max_items;
 	char prompt[THEME_PROMPT_MAX];

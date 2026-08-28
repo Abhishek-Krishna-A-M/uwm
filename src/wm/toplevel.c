@@ -55,8 +55,9 @@ void toplevel_set_size(struct uwm_toplevel *t, int w, int h) {
 	}
 #if WLR_HAS_XWAYLAND
 	else if (t->type == UWM_TOPLEVEL_XWAYLAND && t->xwayland_surface) {
-		wlr_xwayland_surface_configure(t->xwayland_surface,
-			t->xwayland_surface->x, t->xwayland_surface->y, w, h);
+		int x = t->floating ? t->float_x : (t->scene_tree ? t->scene_tree->node.x : t->xwayland_surface->x);
+		int y = t->floating ? t->float_y : (t->scene_tree ? t->scene_tree->node.y : t->xwayland_surface->y);
+		wlr_xwayland_surface_configure(t->xwayland_surface, x, y, w, h);
 	}
 #endif
 }
@@ -69,6 +70,9 @@ void toplevel_set_activated(struct uwm_toplevel *t, bool activated) {
 #if WLR_HAS_XWAYLAND
 	else if (t->type == UWM_TOPLEVEL_XWAYLAND && t->xwayland_surface) {
 		wlr_xwayland_surface_activate(t->xwayland_surface, activated);
+		if (activated) {
+			wlr_xwayland_surface_restack(t->xwayland_surface, NULL, XCB_STACK_MODE_ABOVE);
+		}
 	}
 #endif
 	if (t->foreign_toplevel)
@@ -117,10 +121,6 @@ bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 		struct wlr_xdg_toplevel *xdt = toplevel->xdg_toplevel;
 		if (!xdt) return true;
 		if (xdt->parent) return false;
-		if (xdt->current.min_width == 0 && xdt->current.min_height == 0
-				&& xdt->current.max_width == 0 && xdt->current.max_height == 0) {
-			return false;
-		}
 		if (xdt->current.min_width > 0 && xdt->current.min_height > 0
 				&& xdt->current.min_width == xdt->current.max_width
 				&& xdt->current.min_height == xdt->current.max_height) {
@@ -139,6 +139,17 @@ bool should_tile_toplevel(struct uwm_toplevel *toplevel) {
 			    xs->size_hints->max_width == xs->size_hints->min_width &&
 			    xs->size_hints->max_height == xs->size_hints->min_height)
 				return false;
+		}
+		if (wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_MENU) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DROPDOWN_MENU) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_POPUP_MENU) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLTIP) ||
+		    wlr_xwayland_surface_has_window_type(xs, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_NOTIFICATION)) {
+			return false;
 		}
 		return true;
 	}

@@ -257,6 +257,8 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id) {
 		struct uwm_toplevel *tl = wl_container_of(
 			new_ws->floating_windows.next, tl, floating_link);
 		focus_toplevel(tl);
+	} else {
+		wlr_seat_keyboard_notify_clear_focus(server->seat);
 	}
 
 	/* Update server convenience fields */
@@ -266,6 +268,11 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id) {
 
 	/* Notify bar clients */
 	uwm_bar_send_output(output);
+
+	/* Update all workspace borders */
+	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
+		workspace_update_borders(&server->workspaces.workspaces[i]);
+	}
 
 	/* Let keyboard-interactive layer surfaces (e.g. rofi) take focus
 	 * if present on this output, so they remain usable after switching

@@ -33,14 +33,16 @@ void toggle_floating(struct uwm_toplevel *window)
 		return;
 
 	if (!window->floating) {
-		int float_w = (int)(out_w * floating_default_width_ratio);
-		int float_h = (int)(out_h * floating_default_height_ratio);
+		int float_w = window->float_width > 0 ? window->float_width : (int)(out_w * floating_default_width_ratio);
+		int float_h = window->float_height > 0 ? window->float_height : (int)(out_h * floating_default_height_ratio);
 		if (float_w < floating_create_min_width) float_w = floating_create_min_width;
 		if (float_h < floating_create_min_height) float_h = floating_create_min_height;
 		window->float_width = float_w;
 		window->float_height = float_h;
-		window->float_x = (out_w - float_w) / 2;
-		window->float_y = (out_h - float_h) / 2;
+		if (window->float_x <= 0 && window->float_y <= 0) {
+			window->float_x = (out_w - float_w) / 2;
+			window->float_y = (out_h - float_h) / 2;
+		}
 
 		enum uwm_split saved_sibling_split = UWM_SPLIT_VERTICAL;
 		struct uwm_bsp_node *saved_sibling_node = NULL;
@@ -115,7 +117,7 @@ void toggle_floating(struct uwm_toplevel *window)
 			int count = 0;
 			struct uwm_toplevel *tl;
 			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-				count++;
+				if (!tl->floating && !tl->fullscreen) count++;
 			}
 			if (count <= 1) {
 				ws->monocle = false;
@@ -141,8 +143,8 @@ void toggle_floating(struct uwm_toplevel *window)
 
 	bsp_arrange(ws, out_x, out_y, out_w, out_h, window->server->config.inner_gap);
 
-	if (ws->focused == window)
-		focus_toplevel(window);
+	focus_toplevel(window);
+	workspace_update_borders(ws);
 }
 
 void toggle_fullscreen(struct uwm_toplevel *window)

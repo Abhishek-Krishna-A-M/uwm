@@ -143,6 +143,10 @@ bool server_init(struct uwm_server *server) {
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, managing Wayland globals, and so on. */
 	server->wl_display = wl_display_create();
+	if (!server->wl_display) {
+		wlr_log(WLR_ERROR, "failed to create wl_display");
+		return false;
+	}
 
 	/* Initialize all wl_lists early so that cleanup paths (goto err) can
 	 * safely iterate or wl_list_remove on them regardless of how far init
@@ -550,6 +554,14 @@ bool server_init(struct uwm_server *server) {
 	} else {
 		wlr_log(WLR_ERROR, "Failed to create ext foreign toplevel image capture source manager");
 	}
+
+	/* Add Wayland socket and export WAYLAND_DISPLAY for clients and XWayland */
+	server->socket = wl_display_add_socket_auto(server->wl_display);
+	if (!server->socket) {
+		wlr_log(WLR_ERROR, "failed to add wayland socket");
+		goto err;
+	}
+	setenv("WAYLAND_DISPLAY", server->socket, true);
 
 #if WLR_HAS_XWAYLAND
 	/* XWayland — eager mode if -x passed, else pure Wayland.

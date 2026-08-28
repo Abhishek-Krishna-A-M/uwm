@@ -44,7 +44,7 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 
 	/* create scene surface if not already */
 	if (!toplevel->scene_tree) return;
-	if (xs->surface && !toplevel->scene_tree->children.next) {
+	if (xs->surface && wl_list_empty(&toplevel->scene_tree->children)) {
 		/* subsurface tree handles subsurfaces + damage */
 		wlr_scene_subsurface_tree_create(toplevel->scene_tree, xs->surface);
 	}
@@ -122,12 +122,12 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 	return;
 x_float:
 	if (!toplevel->floating && !toplevel->fullscreen) {
-		toplevel->float_width = (int)(w * floating_default_width_ratio);
-		toplevel->float_height = (int)(h * floating_default_height_ratio);
+		toplevel->float_width = xs->width > 0 ? xs->width : (int)(w * floating_default_width_ratio);
+		toplevel->float_height = xs->height > 0 ? xs->height : (int)(h * floating_default_height_ratio);
 		if (toplevel->float_width < floating_create_min_width) toplevel->float_width = floating_create_min_width;
 		if (toplevel->float_height < floating_create_min_height) toplevel->float_height = floating_create_min_height;
-		toplevel->float_x = (w - toplevel->float_width) / 2;
-		toplevel->float_y = (h - toplevel->float_height) / 2;
+		toplevel->float_x = (xs->x > 0 && xs->x < w) ? xs->x : (w - toplevel->float_width) / 2;
+		toplevel->float_y = (xs->y > 0 && xs->y < h) ? xs->y : (h - toplevel->float_height) / 2;
 		toplevel->floating = true;
 		wl_list_remove(&toplevel->workspace_link);
 		wl_list_init(&toplevel->workspace_link);
@@ -283,16 +283,27 @@ static void xwayland_handle_request_configure(struct wl_listener *listener, void
 		wlr_scene_node_set_position(&toplevel->scene_tree->node, ev->x, ev->y);
 		toplevel_update_border(toplevel);
 	} else {
-		/* tiled: ignore client configure, force layout geometry */
-		int x,y,w,h; get_output_size(toplevel->workspace,&x,&y,&w,&h);
-		bsp_arrange(toplevel->workspace, x,y,w,h, toplevel->server->config.inner_gap);
+		/* tiled: ignore client configure, re-send layout geometry */
+		if (toplevel->workspace && toplevel->workspace->root) {
+			struct uwm_bsp_node *leaf = bsp_find_leaf(toplevel->workspace->root, toplevel);
+			if (leaf) {
+				wlr_xwayland_surface_configure(xs, leaf->x, leaf->y, leaf->width, leaf->height);
+			} else {
+				int x,y,w,h; get_output_size(toplevel->workspace,&x,&y,&w,&h);
+				bsp_arrange(toplevel->workspace, x,y,w,h, toplevel->server->config.inner_gap);
+			}
+		}
 	}
 }
 static void xwayland_handle_set_geometry(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, xwayland_set_geometry);
 	(void)data;
-	if (toplevel->xwayland_surface && toplevel->scene_tree) {
-		wlr_scene_node_set_position(&toplevel->scene_tree->node, toplevel->xwayland_surface->x, toplevel->xwayland_surface->y);
+	if (toplevel->xwayland_surface && toplevel->scene_tree && toplevel->floating) {
+		toplevel->float_x = toplevel->xwayland_surface->x;
+		toplevel->float_y = toplevel->xwayland_surface->y;
+		toplevel->float_width = toplevel->xwayland_surface->width;
+		toplevel->float_height = toplevel->xwayland_surface->height;
+		wlr_scene_node_set_position(&toplevel->scene_tree->node, toplevel->float_x, toplevel->float_y);
 		toplevel_update_border(toplevel);
 	}
 }

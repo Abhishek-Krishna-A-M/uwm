@@ -13,8 +13,8 @@
 
 #define ITEM_GAP 12
 #define EDGE_PAD 12
-#define WS_PAD 10
-#define WS_GAP 12
+#define WS_PAD 12
+#define WS_GAP 10
 #define BLOCK_GAP 20
 #define UNDERLINE_SIZE 3
 

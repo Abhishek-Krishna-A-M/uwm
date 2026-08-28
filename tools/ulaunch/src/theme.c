@@ -4,28 +4,102 @@
 #include <string.h>
 #include <pango/pango.h>
 
+#if __has_include("../config.h")
+#include "../config.h"
+#endif
+/* fallback if config.h not found or macros not defined — mirrors rofi config.rasi */
+#ifndef ULAUNCH_BG
+#define ULAUNCH_BG "#000409"
+#endif
+#ifndef ULAUNCH_FG
+#define ULAUNCH_FG "#ffffff"
+#endif
+#ifndef ULAUNCH_HIGHLIGHT_BG
+#define ULAUNCH_HIGHLIGHT_BG "#ffffff"
+#endif
+#ifndef ULAUNCH_HIGHLIGHT_FG
+#define ULAUNCH_HIGHLIGHT_FG "#000409"
+#endif
+#ifndef ULAUNCH_PROMPT_COLOR
+#define ULAUNCH_PROMPT_COLOR "#ffffff"
+#endif
+#ifndef ULAUNCH_BORDER_COLOR
+#define ULAUNCH_BORDER_COLOR "#ffffff"
+#endif
+#ifndef ULAUNCH_SEPARATOR_COLOR
+#define ULAUNCH_SEPARATOR_COLOR "#ffffff"
+#endif
+#ifndef ULAUNCH_BORDER_WIDTH
+#define ULAUNCH_BORDER_WIDTH 2
+#endif
+#ifndef ULAUNCH_BORDER_RADIUS
+#define ULAUNCH_BORDER_RADIUS 0
+#endif
+#ifndef ULAUNCH_PADDING
+#define ULAUNCH_PADDING 12
+#endif
+#ifndef ULAUNCH_ITEM_PADDING
+#define ULAUNCH_ITEM_PADDING 6
+#endif
+#ifndef ULAUNCH_LINE_SPACING
+#define ULAUNCH_LINE_SPACING 4
+#endif
+#ifndef ULAUNCH_WIDTH_PCT
+#define ULAUNCH_WIDTH_PCT 28
+#endif
+#ifndef ULAUNCH_MAX_ITEMS
+#define ULAUNCH_MAX_ITEMS 5
+#endif
+#ifndef ULAUNCH_FONT
+#define ULAUNCH_FONT "monospace 12"
+#endif
+#ifndef ULAUNCH_PROMPT
+#define ULAUNCH_PROMPT "> "
+#endif
+
 static uint32_t parse_hex(const char *s) {
 	if (*s == '#') s++;
-	unsigned int r, g, b;
+	size_t len = strlen(s);
+	unsigned int r, g, b, a = 0xFF;
+	if (len == 8) {
+		if (sscanf(s, "%02x%02x%02x%02x", &r, &g, &b, &a) != 4) return 0;
+		return (a << 24) | (r << 16) | (g << 8) | b;
+	}
 	if (sscanf(s, "%02x%02x%02x", &r, &g, &b) != 3) return 0;
 	return (0xFF << 24) | (r << 16) | (g << 8) | b;
 }
 
 int theme_load(Theme *t, const char *path) {
+	/* defaults come from config.h which now mirrors ~/dotfiles/config/rofi/config.rasi:
+	 * window { width 28%; padding 12px; border 2px; }
+	 * listview { lines 5; spacing 4px; }
+	 * element { padding 6px; } */
 	*t = (Theme){
-		.bg = parse_hex("#000409"),
-		.fg = parse_hex("#ffffff"),
-		.highlight_bg = parse_hex("#ffffff"),
-		.highlight_fg = parse_hex("#000409"),
-		.prompt_color = parse_hex("#ffffff"),
-		.border_color = parse_hex("#ffffff"),
-		.border_width = 1,
-		.padding = 12,
-		.width_pct = 28,
-		.max_items = 5,
+		.bg = parse_hex(ULAUNCH_BG),
+		.fg = parse_hex(ULAUNCH_FG),
+		.highlight_bg = parse_hex(ULAUNCH_HIGHLIGHT_BG),
+		.highlight_fg = parse_hex(ULAUNCH_HIGHLIGHT_FG),
+		.prompt_color = parse_hex(ULAUNCH_PROMPT_COLOR),
+		.border_color = parse_hex(ULAUNCH_BORDER_COLOR),
+		.separator_color = parse_hex(ULAUNCH_SEPARATOR_COLOR),
+		.border_width = ULAUNCH_BORDER_WIDTH,
+		.border_radius = ULAUNCH_BORDER_RADIUS,
+		.padding = ULAUNCH_PADDING,
+		.item_padding = ULAUNCH_ITEM_PADDING,
+		.line_spacing = ULAUNCH_LINE_SPACING,
+		.width_pct = ULAUNCH_WIDTH_PCT,
+		.max_items = ULAUNCH_MAX_ITEMS,
 	};
-	strcpy(t->font, "monospace 12");
-	strcpy(t->prompt, "> ");
+	/* apply separate separator alpha if config defines it and hex had no AA */
+#ifdef ULAUNCH_SEPARATOR_ALPHA
+	if (((t->separator_color >> 24) & 0xFF) == 0xFF)
+		t->separator_color = (ULAUNCH_SEPARATOR_ALPHA << 24) | (t->separator_color & 0x00FFFFFF);
+#endif
+	/* rofi has no separator; keep ulaunch separator subtle if still opaque */
+	if (t->separator_color == 0xFFFFFFFF)
+		t->separator_color = (0x14 << 24) | 0xFFFFFF;
+	strcpy(t->font, ULAUNCH_FONT);
+	strcpy(t->prompt, ULAUNCH_PROMPT);
 
 	FILE *f = fopen(path, "r");
 	if (!f) goto done;
@@ -49,8 +123,12 @@ int theme_load(Theme *t, const char *path) {
 		else if (strcmp(key, "highlight-fg") == 0) t->highlight_fg = parse_hex(val);
 		else if (strcmp(key, "prompt-color") == 0) t->prompt_color = parse_hex(val);
 		else if (strcmp(key, "border-color") == 0) t->border_color = parse_hex(val);
+		else if (strcmp(key, "separator-color") == 0) t->separator_color = parse_hex(val);
 		else if (strcmp(key, "border-width") == 0) t->border_width = atoi(val);
+		else if (strcmp(key, "border-radius") == 0) t->border_radius = atoi(val);
 		else if (strcmp(key, "padding") == 0) t->padding = atoi(val);
+		else if (strcmp(key, "item-padding") == 0) t->item_padding = atoi(val);
+		else if (strcmp(key, "line-spacing") == 0 || strcmp(key, "spacing") == 0) t->line_spacing = atoi(val);
 		else if (strcmp(key, "width-pct") == 0) t->width_pct = atoi(val);
 		else if (strcmp(key, "max-items") == 0) t->max_items = atoi(val);
 		else if (strcmp(key, "prompt") == 0) {

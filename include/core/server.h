@@ -50,6 +50,7 @@ enum uwm_cursor_mode {
 
 struct uwm_server {
 	struct wl_display *wl_display;
+	const char *socket;
 	struct wlr_backend *backend;
 	struct wlr_renderer *renderer;
 	struct wlr_allocator *allocator;

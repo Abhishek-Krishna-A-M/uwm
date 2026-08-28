@@ -74,32 +74,42 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	}
 
 	if (ws->monocle) {
-		struct uwm_toplevel *old = ws->last_focused;
-		if (old && old != toplevel
-				&& !old->floating && !old->fullscreen) {
-			wlr_scene_node_set_enabled(&old->scene_tree->node, false);
-			if (!toplevel->floating && !toplevel->fullscreen)
-				wlr_scene_node_set_enabled(
-					&toplevel->scene_tree->node, true);
+		struct uwm_toplevel *active_tiled = NULL;
+		if (!toplevel->floating && !toplevel->fullscreen) {
+			active_tiled = toplevel;
+		} else if (ws->last_focused && !ws->last_focused->floating && !ws->last_focused->fullscreen) {
+			active_tiled = ws->last_focused;
 		} else {
 			struct uwm_toplevel *tl;
 			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
-				if (!tl->floating && !tl->fullscreen)
-					wlr_scene_node_set_enabled(&tl->scene_tree->node,
-						tl == toplevel);
+				if (!tl->floating && !tl->fullscreen) {
+					active_tiled = tl;
+					break;
+				}
 			}
 		}
-		if (!toplevel->floating && !toplevel->fullscreen && ws->output) {
+
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+			if (tl->floating || tl->fullscreen)
+				continue;
+			wlr_scene_node_set_enabled(&tl->scene_tree->node,
+				tl == active_tiled);
+		}
+		if (active_tiled && ws->output) {
 			struct uwm_output *o = ws->output;
 			int ogap = o->server->config.outer_gap;
 			int x = o->lx + o->usable_area.x + ogap;
 			int y = o->ly + o->usable_area.y + ogap;
 			int w = o->usable_area.width - 2 * ogap;
 			int h = o->usable_area.height - 2 * ogap;
-			wlr_scene_node_set_position(&toplevel->scene_tree->node, x, y);
-			struct wlr_box cur = toplevel_geometry(toplevel);
+			wlr_scene_node_set_position(&active_tiled->scene_tree->node, x, y);
+			struct wlr_box cur = toplevel_geometry(active_tiled);
 			if (cur.width != w || cur.height != h)
-				toplevel_set_size(toplevel, w, h);
+				toplevel_set_size(active_tiled, w, h);
+		}
+		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 		}
 	}
 
@@ -174,8 +184,10 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH) {
 		uwm_bar_notify_focus(server, toplevel);
 	}
-	/* update borders for old and new workspace */
-	workspace_update_borders(toplevel->workspace);
+	/* update all borders across all workspaces to prevent border leaks */
+	for (uint32_t i = 0; i < UWM_WORKSPACE_COUNT; i++) {
+		workspace_update_borders(&server->workspaces.workspaces[i]);
+	}
 }
 
 struct uwm_toplevel *desktop_toplevel_at(

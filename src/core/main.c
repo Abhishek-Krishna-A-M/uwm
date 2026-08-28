@@ -161,9 +161,13 @@ int main(int argc, char *argv[]) {
 	wlr_log_init(getenv("UWM_DEBUG") ? WLR_DEBUG : WLR_ERROR, NULL);
 	char *startup_cmd = NULL;
 
+#if WLR_HAS_XWAYLAND
+	bool enable_xwayland = true;
+#else
 	bool enable_xwayland = false;
+#endif
 	int c;
-	while ((c = getopt(argc, argv, "s:xh")) != -1) {
+	while ((c = getopt(argc, argv, "s:xXh")) != -1) {
 		switch (c) {
 		case 's':
 			startup_cmd = optarg;
@@ -171,14 +175,18 @@ int main(int argc, char *argv[]) {
 		case 'x':
 			enable_xwayland = true;
 			break;
+		case 'X':
+			enable_xwayland = false;
+			break;
 		default:
-			printf("Usage: %s [-s startup command] [-x]\n", argv[0]);
-			printf("  -x  enable XWayland (lazy, sets DISPLAY)\n");
+			printf("Usage: %s [-s startup command] [-x|-X]\n", argv[0]);
+			printf("  -x  enable XWayland (default)\n");
+			printf("  -X  disable XWayland (pure Wayland)\n");
 			return 0;
 		}
 	}
 	if (optind < argc) {
-		printf("Usage: %s [-s startup command] [-x]\n", argv[0]);
+		printf("Usage: %s [-s startup command] [-x|-X]\n", argv[0]);
 		return 0;
 	}
 
@@ -196,18 +204,10 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	const char *socket = wl_display_add_socket_auto(server.wl_display);
-	if (!socket) {
-		server_finish(&server);
-		return 1;
-	}
-
 	if (!wlr_backend_start(server.backend)) {
 		server_finish(&server);
 		return 1;
 	}
-
-	setenv("WAYLAND_DISPLAY", socket, true);
 
 	resolve_pid_dir();
 
@@ -218,8 +218,7 @@ int main(int argc, char *argv[]) {
 	if (startup_cmd)
 		spawn_cmd(startup_cmd);
 
-
-	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", socket);
+	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", server.socket);
 
 	struct sigaction old_handlers[5];
 	install_crash_handlers(old_handlers);

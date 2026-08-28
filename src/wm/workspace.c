@@ -69,26 +69,12 @@ static void workspace_hide(struct uwm_workspace *ws)
 	wl_list_for_each(toplevel, &ws->toplevels, workspace_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-		if (toplevel->border_top)
-			wlr_scene_node_set_enabled(&toplevel->border_top->node, false);
-		if (toplevel->border_bottom)
-			wlr_scene_node_set_enabled(&toplevel->border_bottom->node, false);
-		if (toplevel->border_left)
-			wlr_scene_node_set_enabled(&toplevel->border_left->node, false);
-		if (toplevel->border_right)
-			wlr_scene_node_set_enabled(&toplevel->border_right->node, false);
+		toplevel_update_border(toplevel);
 	}
 	wl_list_for_each(toplevel, &ws->floating_windows, floating_link)
 	{
 		wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
-		if (toplevel->border_top)
-			wlr_scene_node_set_enabled(&toplevel->border_top->node, false);
-		if (toplevel->border_bottom)
-			wlr_scene_node_set_enabled(&toplevel->border_bottom->node, false);
-		if (toplevel->border_left)
-			wlr_scene_node_set_enabled(&toplevel->border_left->node, false);
-		if (toplevel->border_right)
-			wlr_scene_node_set_enabled(&toplevel->border_right->node, false);
+		toplevel_update_border(toplevel);
 	}
 }
 
@@ -115,12 +101,30 @@ static void workspace_show(struct uwm_workspace *ws)
 		toplevel_update_border(ws->fullscreen_window);
 		return;
 	}
+
+	struct uwm_toplevel *active_tiled = NULL;
+	if (ws->monocle) {
+		if (ws->focused && !ws->focused->floating && !ws->focused->fullscreen)
+			active_tiled = ws->focused;
+		else if (ws->last_focused && !ws->last_focused->floating && !ws->last_focused->fullscreen)
+			active_tiled = ws->last_focused;
+		else {
+			struct uwm_toplevel *tl;
+			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
+				if (!tl->floating && !tl->fullscreen) {
+					active_tiled = tl;
+					break;
+				}
+			}
+		}
+	}
+
 	struct uwm_toplevel *toplevel;
 	wl_list_for_each(toplevel, &ws->toplevels, workspace_link)
 	{
 		if (ws->monocle) {
 			wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
-				toplevel == ws->focused);
+				toplevel == active_tiled);
 		} else {
 			wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
 		}
