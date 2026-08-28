@@ -478,6 +478,7 @@ static void decoration_handle_request_mode(struct wl_listener *listener, void *d
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
+	toplevel_update_border(toplevel);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		if (toplevel->decoration) {
@@ -507,6 +508,7 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, cur_app);
 		}
 	}
+	toplevel_update_border(toplevel);
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {

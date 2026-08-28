@@ -107,6 +107,7 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 			wlr_xwayland_set_seat(toplevel->server->xwayland, toplevel->server->seat);
 			focus_toplevel(toplevel);
 		}
+		workspace_update_borders(toplevel->workspace);
 		return;
 	}
 	if (!should_tile_toplevel(toplevel)) goto x_float;
@@ -134,8 +135,10 @@ x_float:
 		wlr_scene_node_reparent(&toplevel->scene_tree->node, toplevel->server->floating_layer);
 		wlr_scene_node_set_position(&toplevel->scene_tree->node, toplevel->float_x, toplevel->float_y);
 		wlr_xwayland_surface_configure(xs, toplevel->float_x, toplevel->float_y, toplevel->float_width, toplevel->float_height);
+		toplevel_update_border(toplevel);
 	}
 	focus_toplevel(toplevel);
+	workspace_update_borders(toplevel->workspace);
 }
 
 static void xwayland_toplevel_unmap(struct wl_listener *listener, void *data) {
@@ -185,6 +188,7 @@ static void xwayland_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (will_exit) ws->monocle = false;
 	if (ws->root) bsp_arrange(ws, x, y, w, h, toplevel->server->config.inner_gap);
 	if (will_exit && ws->root) set_children_visible(ws->root, true);
+	workspace_update_borders(ws);
 	if (displaced && ws->focused) focus_toplevel(ws->focused);
 	else if (!ws->focused) wlr_seat_keyboard_notify_clear_focus(seat);
 }
@@ -192,6 +196,7 @@ static void xwayland_toplevel_unmap(struct wl_listener *listener, void *data) {
 static void xwayland_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 	struct wlr_xwayland_surface *xs = toplevel->xwayland_surface;
+	toplevel_update_border(toplevel);
 	if (!xs || !xs->surface) return;
 	const char *cur_title = xs->title;
 	const char *cur_app = xs->class;
@@ -213,6 +218,7 @@ static void xwayland_toplevel_commit(struct wl_listener *listener, void *data) {
 			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, cur_app);
 		}
 	}
+	toplevel_update_border(toplevel);
 }
 
 static void xwayland_toplevel_destroy(struct wl_listener *listener, void *data) {
@@ -275,6 +281,7 @@ static void xwayland_handle_request_configure(struct wl_listener *listener, void
 		toplevel->float_x = ev->x; toplevel->float_y = ev->y;
 		toplevel->float_width = ev->width; toplevel->float_height = ev->height;
 		wlr_scene_node_set_position(&toplevel->scene_tree->node, ev->x, ev->y);
+		toplevel_update_border(toplevel);
 	} else {
 		/* tiled: ignore client configure, force layout geometry */
 		int x,y,w,h; get_output_size(toplevel->workspace,&x,&y,&w,&h);
@@ -284,8 +291,10 @@ static void xwayland_handle_request_configure(struct wl_listener *listener, void
 static void xwayland_handle_set_geometry(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, xwayland_set_geometry);
 	(void)data;
-	if (toplevel->xwayland_surface && toplevel->scene_tree)
+	if (toplevel->xwayland_surface && toplevel->scene_tree) {
 		wlr_scene_node_set_position(&toplevel->scene_tree->node, toplevel->xwayland_surface->x, toplevel->xwayland_surface->y);
+		toplevel_update_border(toplevel);
+	}
 }
 static void xwayland_handle_request_move(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, request_move);

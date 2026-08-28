@@ -124,8 +124,12 @@
 	KEY(MOD, XKB_KEY_Tab, workspaceprev, {0}) \
 	KEY(MOD, XKB_KEY_bracketleft, workspacedec, {0}) \
 	KEY(MOD, XKB_KEY_bracketright, workspaceinc, {0}) \
+	KEY(MOD, XKB_KEY_braceleft, workspacedec_active, {0}) \
+	KEY(MOD, XKB_KEY_braceright, workspaceinc_active, {0}) \
 	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft, workspacedec_active, {0}) \
 	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_braceright, workspaceinc_active, {0}) \
+	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_bracketleft, workspacedec_active, {0}) \
+	KEY(MOD|WLR_MODIFIER_SHIFT, XKB_KEY_bracketright, workspaceinc_active, {0}) \
 	KEY(MOD, XKB_KEY_f, togglefullscreen, {0}) \
 	KEY(MOD, XKB_KEY_s, togglefloating, {0}) \
 	KEY(MOD, XKB_KEY_m, togglemonocle, {0}) \

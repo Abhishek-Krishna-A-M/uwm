@@ -105,14 +105,27 @@ void toplevel_update_border(struct uwm_toplevel *t) {
 	struct wlr_box geo = toplevel_geometry(t);
 	int wx = t->scene_tree->node.x;
 	int wy = t->scene_tree->node.y;
-	/* geo.x/y is offset inside scene_tree (usually 0, but handle) */
 	int x = wx + geo.x;
 	int y = wy + geo.y;
 	int w = geo.width;
 	int h = geo.height;
 	if (w <= 0 || h <= 0) {
-		/* fallback to stored float size for floating not yet committed */
-		if (t->floating) { w = t->float_width; h = t->float_height; x = t->float_x; y = t->float_y; }
+		if (t->floating) {
+			w = t->float_width; h = t->float_height; x = t->float_x; y = t->float_y;
+		} else if (t->workspace && t->workspace->root) {
+			struct uwm_bsp_node *leaf = bsp_find_leaf(t->workspace->root, t);
+			if (leaf) { x = leaf->x; y = leaf->y; w = leaf->width; h = leaf->height; }
+		}
+		if (w <= 0 || h <= 0) return;
+	}
+	/* if tiled and still no valid geo, use scene position directly (initial map) */
+	if (w <= 0 || h <= 0) {
+		x = wx; y = wy;
+		/* try to get size from bsp node */
+		if (t->workspace && t->workspace->root) {
+			struct uwm_bsp_node *leaf = bsp_find_leaf(t->workspace->root, t);
+			if (leaf && leaf->width > 0) { w = leaf->width; h = leaf->height; x = leaf->x; y = leaf->y; }
+		}
 		if (w <= 0 || h <= 0) return;
 	}
 	/* keep window on top of borders */

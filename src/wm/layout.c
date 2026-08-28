@@ -57,6 +57,13 @@ void toggle_monocle(struct uwm_workspace *workspace)
 			bsp_arrange_workspace(workspace);
 		if (workspace->root)
 			set_children_visible(workspace->root, true);
+		/* persistent floating: keep floating windows visible on top, BSP intact */
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			wlr_scene_node_raise_to_top(&tl->scene_tree->node);
+			toplevel_update_border(tl);
+		}
 	} else {
 		workspace->monocle = true;
 		if (!workspace->root)
@@ -67,6 +74,13 @@ void toggle_monocle(struct uwm_workspace *workspace)
 
 		if (focused)
 			focus_toplevel(focused);
+		/* keep floating visible and raised */
+		struct uwm_toplevel *tl;
+		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
+			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
+			wlr_scene_node_raise_to_top(&tl->scene_tree->node);
+			toplevel_update_border(tl);
+		}
 	}
 	workspace_update_borders(workspace);
 }
