@@ -364,6 +364,8 @@ void workspace_next_active(struct uwm_server *server)
 			return;
 		}
 	}
+	/* fallback: if no other active, do normal sequential */
+	workspace_next(server);
 }
 
 void workspace_prev_active(struct uwm_server *server)
@@ -378,6 +380,7 @@ void workspace_prev_active(struct uwm_server *server)
 			return;
 		}
 	}
+	workspace_prev(server);
 }
 
 struct uwm_workspace *workspace_for_output(struct uwm_server *server,

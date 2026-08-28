@@ -99,11 +99,12 @@ static void handle_session_active_sentinel(struct wl_listener *listener, void *d
 static void handle_xwayland_ready(struct wl_listener *listener, void *data) {
 	struct uwm_server *server = wl_container_of(listener, server, xwayland_ready);
 	(void)data;
-	/* ready is emitted after XWayland socket is up; DISPLAY already set at create time (immediate) */
 	wlr_log(WLR_INFO, "XWayland ready DISPLAY=%s", server->xwayland ? server->xwayland->display_name : "(null)");
 	/* Ensure DISPLAY still exported to autostart children spawned after ready */
-	if (server->xwayland && server->xwayland->display_name)
+	if (server->xwayland && server->xwayland->display_name) {
 		setenv("DISPLAY", server->xwayland->display_name, true);
+		wlr_log(WLR_INFO, "XWayland DISPLAY set to %s, socket at /tmp/.X11-unix/X%s", server->xwayland->display_name, server->xwayland->display_name+1);
+	}
 }
 #endif
 
@@ -565,6 +566,7 @@ bool server_init(struct uwm_server *server) {
 		server->xwayland_ready.notify = handle_xwayland_ready;
 		wl_signal_add(&server->xwayland->events.ready, &server->xwayland_ready);
 		setenv("DISPLAY", server->xwayland->display_name, true);
+		wlr_log(WLR_INFO, "XWayland created DISPLAY=%s (eager, should appear in htop)", server->xwayland->display_name);
 		/* wlroots 0.20.2 requires explicit seat assignment – Sway does this in
 		 * seat_send_focus (input/seat.c:196) and unmanaged_handle_map. UWM
 		 * previously only did it for override-redirect, so the XWM never

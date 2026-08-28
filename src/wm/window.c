@@ -89,7 +89,7 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 						tl == toplevel);
 			}
 		}
-	if (ws->output) {
+		if (!toplevel->floating && !toplevel->fullscreen && ws->output) {
 			struct uwm_output *o = ws->output;
 			int ogap = o->server->config.outer_gap;
 			int x = o->lx + o->usable_area.x + ogap;
