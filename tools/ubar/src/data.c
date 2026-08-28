@@ -62,7 +62,7 @@ bool data_update_clock(State *state) {
 	if (state->time_detailed)
 		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M:%S %p", &tm);
 	else
-		strftime(state->time_str, sizeof(state->time_str), "%I:%M %p", &tm);
+		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M %p", &tm);
 	return true;
 }
 
@@ -263,10 +263,11 @@ static int audio_init_retries = 0;
 static void audio_sink_info_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
 	struct audio_monitor_state *ams = userdata;
 	if (eol || !i) {
-		/* PipeWire may not have sinks ready at boot — retry with backoff */
-		if (g_vol_pct == 0 && g_monitors_running && audio_init_retries < 10) {
+		/* PipeWire may not have sinks ready at boot — don't block PA thread.
+		 * The subscription will deliver sink info when ready. One immediate
+		 * retry without sleep is enough to handle transient empty. */
+		if (g_vol_pct == 0 && g_monitors_running && audio_init_retries < 3) {
 			audio_init_retries++;
-			usleep(500000); /* 500ms */
 			pa_operation *op = pa_context_get_sink_info_by_name(c,
 				ams->default_sink[0] ? ams->default_sink : NULL,
 				audio_sink_info_cb, ams);
@@ -416,8 +417,14 @@ static void *network_monitor_thread(void *arg) {
 
 	while (g_monitors_running) {
 		struct pollfd pfd = { .fd = sock, .events = POLLIN };
-		int ret = poll(&pfd, 1, 500);
-		if (ret <= 0) continue;
+		/* sleep mode: block indefinitely until netlink event or shutdown;
+		 * no 500ms wakeups — saves power when device is suspended */
+		int ret = poll(&pfd, 1, -1);
+		if (ret <= 0) {
+			if (errno == EINTR) continue;
+			if (!g_monitors_running) break;
+			continue;
+		}
 
 		/* Drain all pending netlink messages */
 		char buf[4096];
@@ -465,8 +472,13 @@ static void *display_monitor_thread(void *arg) {
 
 	while (g_monitors_running) {
 		struct pollfd pfd = { .fd = udev_fd, .events = POLLIN };
-		int ret = poll(&pfd, 1, 500);
-		if (ret <= 0) continue;
+		/* sleep mode: block indefinitely — no periodic wakeups */
+		int ret = poll(&pfd, 1, -1);
+		if (ret <= 0) {
+			if (errno == EINTR) continue;
+			if (!g_monitors_running) break;
+			continue;
+		}
 
 		/* Drain all pending udev events */
 		struct udev_device *dev;
@@ -540,18 +552,25 @@ bool data_update_slow_timer(State *state) {
  * SYNC (called from main thread after pipe notify)
  * ================================================================ */
 
-void data_sync_to_state(State *state) {
-	/* Volume is synced in real-time by the audio monitor callback,
-	 * but we re-read from globals for the state struct. */
+bool data_sync_audio(State *state) {
 	pthread_mutex_lock(&g_data_mutex);
+	int old_vol = state->vol_pct;
+	bool old_muted = state->muted;
 	state->vol_pct = g_vol_pct;
 	state->muted = g_muted;
 	pthread_mutex_unlock(&g_data_mutex);
+	return old_vol != state->vol_pct || old_muted != state->muted;
+}
 
-	/* Battery, HDMI, locks: re-read from sysfs (triggered by events) */
-	data_update_battery_hardware(state);
-	data_update_hdmi_hardware(state);
-	data_update_locks_hardware(state);
+bool data_sync_display(State *state) {
+	bool changed = false;
+	changed |= data_update_battery_hardware(state);
+	changed |= data_update_hdmi_hardware(state);
+	changed |= data_update_locks_hardware(state);
+	return changed;
+}
+
+bool data_sync_network(State *state) {
 
 	/* Network: re-read from /proc/net/dev and cache iface name */
 	/* Network info is maintained by the netlink monitor. We read
@@ -663,4 +682,15 @@ void data_sync_to_state(State *state) {
 		snprintf(state->net_speed, sizeof(state->net_speed), "%s \u2193%s \u2191%s", net_icon, rx_str, tx_str);
 	}
 	pthread_mutex_unlock(&g_data_mutex);
+	/* simple: consider network changed if we got here (conservative) */
+	return true;
+}
+
+void data_sync_to_state(State *state) {
+	/* legacy wrapper — triggers all, used only for init */
+	bool c = false;
+	c |= data_sync_audio(state);
+	c |= data_sync_display(state);
+	c |= data_sync_network(state);
+	(void)c;
 }

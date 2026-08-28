@@ -148,7 +148,7 @@ static void ws_focused_title(void *data,
 		const char *title) {
 	State *s = (State *)data;
 	if (strcmp(s->focused_title, title) != 0) {
-		strncpy(s->focused_title, title, sizeof(s->focused_title) - 1);
+		snprintf(s->focused_title, sizeof(s->focused_title), "%s", title);
 		s->need_redraw = true;
 	}
 }
@@ -309,6 +309,7 @@ int main(int argc, char **argv) {
 
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
+	signal(SIGCHLD, SIG_IGN);
 
 	/* Main event loop */
 	int wl_fd = wl_display_get_fd(state.display);
@@ -322,9 +323,9 @@ int main(int argc, char **argv) {
 	};
 
 	while (state.running) {
-		if (state.need_redraw && state.configured) {
+		if (state.need_redraw && state.configured && !state.frame_pending) {
 			render_frame(&state);
-			state.need_redraw = false;
+			if (state.frame_pending) state.need_redraw = false;
 		}
 
 		if (wl_display_flush(state.display) < 0) {
@@ -381,22 +382,22 @@ int main(int argc, char **argv) {
 		/* Audio volume changed (PipeWire/PulseAudio event) */
 		if (fds[FD_AUDIO].revents & POLLIN) {
 			drain_pipe(state.audio_pipe[0]);
-			data_sync_to_state(&state);
-			state.need_redraw = true;
+			if (data_sync_audio(&state))
+				state.need_redraw = true;
 		}
 
 		/* Network changed (netlink event) */
 		if (fds[FD_NET].revents & POLLIN) {
 			drain_pipe(state.network_pipe[0]);
-			data_sync_to_state(&state);
-			state.need_redraw = true;
+			if (data_sync_network(&state))
+				state.need_redraw = true;
 		}
 
 		/* Display/HDMI/LEDs changed (udev event) */
 		if (fds[FD_DISP].revents & POLLIN) {
 			drain_pipe(state.display_pipe[0]);
-			data_sync_to_state(&state);
-			state.need_redraw = true;
+			if (data_sync_display(&state))
+				state.need_redraw = true;
 		}
 	}
 
@@ -437,6 +438,7 @@ int main(int argc, char **argv) {
 	close(state.network_pipe[0]); close(state.network_pipe[1]);
 	close(state.display_pipe[0]); close(state.display_pipe[1]);
 
+	wl_registry_destroy(registry);
 	wl_display_disconnect(state.display);
 
 	if (state.running) {

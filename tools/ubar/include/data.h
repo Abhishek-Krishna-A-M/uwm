@@ -16,6 +16,9 @@ bool data_update_battery_hardware(State *state);
 bool data_update_hdmi_hardware(State *state);
 bool data_update_locks_hardware(State *state);
 void data_sync_to_state(State *state);
+bool data_sync_audio(State *state);
+bool data_sync_network(State *state);
+bool data_sync_display(State *state);
 bool data_update_all_timer(State *state);
 bool data_update_slow_timer(State *state);
 
