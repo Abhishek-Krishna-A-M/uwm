@@ -76,8 +76,10 @@ static void bar_manager_handle_get_workspace_group(struct wl_client *client,
 	if (title_out) {
 		struct uwm_workspace *ws = &manager->server->workspaces
 			.workspaces[title_out->current_workspace];
-		if (ws && ws->focused && ws->focused->xdg_toplevel->title)
-			title = ws->focused->xdg_toplevel->title;
+		const char *focused_title = ws && ws->focused
+			? toplevel_title(ws->focused) : NULL;
+		if (focused_title)
+			title = focused_title;
 	}
 	uwm_bar_send_focused_title(group, title);
 	zwp_uwm_workspace_group_v1_send_done(group->resource);
@@ -220,13 +222,17 @@ void uwm_bar_send_all(struct uwm_server *server)
 		if (group->output) {
 			struct uwm_workspace *ws = &server->workspaces
 				.workspaces[group->output->current_workspace];
-			if (ws && ws->focused && ws->focused->xdg_toplevel->title)
-				title = ws->focused->xdg_toplevel->title;
+			const char *focused_title = ws && ws->focused
+				? toplevel_title(ws->focused) : NULL;
+			if (focused_title)
+				title = focused_title;
 		} else if (server->active_output) {
 			struct uwm_workspace *ws = &server->workspaces
 				.workspaces[server->active_output->current_workspace];
-			if (ws && ws->focused && ws->focused->xdg_toplevel->title)
-				title = ws->focused->xdg_toplevel->title;
+			const char *focused_title = ws && ws->focused
+				? toplevel_title(ws->focused) : NULL;
+			if (focused_title)
+				title = focused_title;
 		}
 		uwm_bar_send_focused_title(group, title);
 		zwp_uwm_workspace_group_v1_send_done(group->resource);

@@ -162,7 +162,10 @@ int main(int argc, char *argv[]) {
 	char *startup_cmd = NULL;
 
 #if WLR_HAS_XWAYLAND
-	bool enable_xwayland = true;
+	/* Keep the default compositor session pure Wayland. XWayland is an
+	 * explicit opt-in via -x so launching uwm cannot create an extra X server
+	 * unexpectedly. */
+	bool enable_xwayland = false;
 #else
 	bool enable_xwayland = false;
 #endif
@@ -180,7 +183,7 @@ int main(int argc, char *argv[]) {
 			break;
 		default:
 			printf("Usage: %s [-s startup command] [-x|-X]\n", argv[0]);
-			printf("  -x  enable XWayland (default)\n");
+			printf("  -x  enable XWayland\n");
 			printf("  -X  disable XWayland (pure Wayland)\n");
 			return 0;
 		}

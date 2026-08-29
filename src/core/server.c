@@ -125,7 +125,9 @@ static void uwm_session_destroy(struct uwm_server *server) {
 bool server_init(struct uwm_server *server) {
 	/* Set up signal handling with SA_RESTART to prevent signals from
 	 * interrupting blocking syscalls (crucial during VT switch).
-	 * SIGCHLD: prevent zombie processes from fork() calls.
+	 * SIGCHLD must retain its default disposition. wlroots uses SIGCHLD to
+	 * monitor its XWayland child; ignoring it makes the child un-reapable and
+	 * prevents the XWayland server from becoming ready.
 	 * SIGPIPE: prevent broken pipes (e.g. from PipeWire dying on VT switch)
 	 *          from killing the compositor.
 	 * SIGHUP: logind may revoke the controlling terminal during VT switch,
@@ -134,7 +136,10 @@ bool server_init(struct uwm_server *server) {
 	 * SIGTERM: logind sends SIGTERM when disabling a seat during VT switch.
 	 *          Ignore it — the event loop handles SIGINT for clean exit. */
 	struct sigaction sa_ign = { .sa_handler = SIG_IGN, .sa_flags = SA_RESTART };
-	sigaction(SIGCHLD, &sa_ign, NULL);
+	struct sigaction sa_chld = { .sa_handler = SIG_DFL, .sa_flags = SA_RESTART };
+	/* Do not inherit SIGCHLD=SIG_IGN from a parent launcher: wlroots' child
+	 * watcher needs the normal SIGCHLD semantics for XWayland. */
+	sigaction(SIGCHLD, &sa_chld, NULL);
 	sigaction(SIGPIPE, &sa_ign, NULL);
 	sigaction(SIGHUP, &sa_ign, NULL);
 	sigaction(SIGTERM, &sa_ign, NULL);

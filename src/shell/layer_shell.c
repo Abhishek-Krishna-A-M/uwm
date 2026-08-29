@@ -256,7 +256,7 @@ static void handle_unmap(struct wl_listener *listener, void *data) {
 			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
 			if (keyboard) {
 				wlr_seat_keyboard_notify_enter(server->seat,
-					ws->focused->xdg_toplevel->base->surface,
+					toplevel_surface(ws->focused),
 					keyboard->keycodes,
 					keyboard->num_keycodes,
 					&keyboard->modifiers);

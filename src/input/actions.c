@@ -92,6 +92,9 @@ static void focus_move(struct uwm_workspace *ws, int dx, int dy,
 		focused->float_y += dy;
 		wlr_scene_node_set_position(&focused->scene_tree->node,
 			focused->float_x, focused->float_y);
+		/* Keyboard movement changes the compositor-side geometry directly;
+		 * keep the active border in lockstep with the scene node. */
+		toplevel_update_border(focused);
 	} else {
 		struct uwm_toplevel *target = bsp_fn(ws);
 		if (target)
@@ -132,6 +135,7 @@ static void resize_float(struct uwm_toplevel *focused, int dx, int dy, int dw, i
 	wlr_scene_node_set_position(&focused->scene_tree->node,
 		focused->float_x, focused->float_y);
 	toplevel_set_size(focused, focused->float_width, focused->float_height);
+	toplevel_update_border(focused);
 }
 
 static void resize_tiled(float delta)
@@ -295,4 +299,3 @@ void rotatesplit(const union arg *arg)
 	bsp_rotate_focused_split(current_ws());
 	bsp_arrange_current_workspace();
 }
-

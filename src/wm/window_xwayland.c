@@ -272,11 +272,18 @@ static void xwayland_handle_request_configure(struct wl_listener *listener, void
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, xwayland_configure);
 	struct wlr_xwayland_surface_configure_event *ev = data;
 	struct wlr_xwayland_surface *xs = toplevel->xwayland_surface;
-	if (!xs || !xs->surface || !xs->surface->mapped) {
+	if (!xs || !ev) return;
+	if (!xs->surface || !xs->surface->mapped) {
 		wlr_xwayland_surface_configure(xs, ev->x, ev->y, ev->width, ev->height);
 		return;
 	}
 	if (toplevel->floating) {
+		/* X11 clients such as xterm can repeat ConfigureRequest with the
+		 * geometry we just accepted. Avoid feeding an identical request back
+		 * into XWayland and spinning the compositor event loop. */
+		if (toplevel->float_x == ev->x && toplevel->float_y == ev->y &&
+		    toplevel->float_width == ev->width && toplevel->float_height == ev->height)
+			return;
 		wlr_xwayland_surface_configure(xs, ev->x, ev->y, ev->width, ev->height);
 		toplevel->float_x = ev->x; toplevel->float_y = ev->y;
 		toplevel->float_width = ev->width; toplevel->float_height = ev->height;
@@ -287,6 +294,9 @@ static void xwayland_handle_request_configure(struct wl_listener *listener, void
 		if (toplevel->workspace && toplevel->workspace->root) {
 			struct uwm_bsp_node *leaf = bsp_find_leaf(toplevel->workspace->root, toplevel);
 			if (leaf) {
+				if (leaf->x == ev->x && leaf->y == ev->y &&
+				    leaf->width == ev->width && leaf->height == ev->height)
+					return;
 				wlr_xwayland_surface_configure(xs, leaf->x, leaf->y, leaf->width, leaf->height);
 			} else {
 				int x,y,w,h; get_output_size(toplevel->workspace,&x,&y,&w,&h);
