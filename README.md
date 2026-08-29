@@ -2,6 +2,18 @@
 
 UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by bspwm and dwl. It focuses on simplicity, performance, and a keyboard-driven workflow.
 
+## Release 1.0.0
+
+UWM 1.0.0 is the first stable release after 0.9.1. It includes focused-window borders, improved floating-window behavior, monocle-mode improvements, multi-output fixes, UBar updates, performance and resource-management work, and Xwayland support.
+
+Xwayland is opt-in:
+
+```sh
+uwm       # Pure Wayland session
+uwm -x    # Enable Xwayland for X11 applications
+uwm -X    # Explicitly disable Xwayland
+```
+
 ## Philosophy
 
 - **BSP-first workflow**: Windows are organized in a binary space partitioning tree. This is the primary layout mode.
@@ -22,6 +34,8 @@ UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by 
 - Focus movement in all directions
 - Window swap in all directions
 - Resize support (tiled ratio and floating dimensions)
+- Focused-window border for tiled and floating windows
+- Keyboard movement and resizing with synchronized borders
 - Split rotation
 - Focus cycling
 
@@ -59,6 +73,7 @@ UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by 
 - linux-dmabuf-v1 (PipeWire screen capture)
 - Transient seat protocol
 - Primary selection
+- Xwayland (enabled with `uwm -x`)
 
 ### Desktop Integration
 
@@ -95,6 +110,7 @@ Coming soon.
 - wayland-server
 - xkbcommon
 - libinput
+- xorg-xwayland (optional, required for X11 applications)
 
 ## Building
 
@@ -318,5 +334,5 @@ UWM does not claim compatibility with any of these projects. It is an independen
 - No unnecessary abstractions
 - No plugin system
 - No scripting engine
-- No XWayland support (planned but not implemented)
+- Xwayland is disabled unless UWM is started with `-x`
 - No IPC/uwmctl (planned but not implemented)
