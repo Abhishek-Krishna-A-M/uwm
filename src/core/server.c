@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <wlr/util/log.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -28,6 +29,12 @@ static int handle_term_signal(int signo, void *data) {
 	wlr_log(WLR_INFO, "Received signal %d, terminating compositor", signo);
 	wl_display_terminate(server->wl_display);
 	return 0;
+}
+
+static void sigchld_handler(int signo) {
+	(void)signo;
+	while (waitpid(-1, NULL, WNOHANG) > 0) {
+	}
 }
 
 static void handle_renderer_lost(struct wl_listener *listener, void *data) {
@@ -136,9 +143,7 @@ bool server_init(struct uwm_server *server) {
 	 * SIGTERM: logind sends SIGTERM when disabling a seat during VT switch.
 	 *          Ignore it — the event loop handles SIGINT for clean exit. */
 	struct sigaction sa_ign = { .sa_handler = SIG_IGN, .sa_flags = SA_RESTART };
-	struct sigaction sa_chld = { .sa_handler = SIG_DFL, .sa_flags = SA_RESTART };
-	/* Do not inherit SIGCHLD=SIG_IGN from a parent launcher: wlroots' child
-	 * watcher needs the normal SIGCHLD semantics for XWayland. */
+	struct sigaction sa_chld = { .sa_handler = sigchld_handler, .sa_flags = SA_RESTART | SA_NOCLDSTOP };
 	sigaction(SIGCHLD, &sa_chld, NULL);
 	sigaction(SIGPIPE, &sa_ign, NULL);
 	sigaction(SIGHUP, &sa_ign, NULL);
