@@ -58,4 +58,14 @@ clean:
 	rm -f protocol/wlr-layer-shell-unstable-v1-client-protocol.h protocol/wlr-layer-shell-unstable-v1-client-protocol.c
 	rm -f protocol/xdg-shell-client-protocol.h protocol/xdg-shell-client-protocol.c
 
-.PHONY: all clean
+PREFIX ?= /usr
+BINDIR = $(DESTDIR)$(PREFIX)/bin
+
+install: ubar
+	mkdir -p $(BINDIR)
+	install -m 755 ubar $(BINDIR)/ubar
+
+uninstall:
+	rm -f $(BINDIR)/ubar
+
+.PHONY: all clean install uninstall

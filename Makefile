@@ -54,4 +54,16 @@ clean:
 distclean: clean
 	rm -f config.h
 
-.PHONY: all clean distclean
+PREFIX ?= /usr
+BINDIR = $(DESTDIR)$(PREFIX)/bin
+
+install: $(BIN)
+	mkdir -p $(BINDIR)
+	install -m 755 $(BIN) $(BINDIR)/uwm
+	$(MAKE) -C tools/ubar install PREFIX=$(PREFIX) DESTDIR=$(DESTDIR)
+	$(MAKE) -C tools/ulaunch install PREFIX=$(PREFIX) DESTDIR=$(DESTDIR)
+
+uninstall:
+	rm -f $(BINDIR)/uwm $(BINDIR)/ubar $(BINDIR)/ulaunch
+
+.PHONY: all clean distclean install uninstall

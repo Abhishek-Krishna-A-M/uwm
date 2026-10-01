@@ -1,7 +1,9 @@
 #include <stdlib.h>
 #include <time.h>
+#include <stdbool.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_management_v1.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -490,6 +492,16 @@ struct uwm_output *output_first(struct uwm_server *server) {
 	struct uwm_output *output;
 	output = wl_container_of(server->outputs.next, output, link);
 	return output;
+}
+
+bool output_logical_box(struct uwm_output *output, struct wlr_box *box) {
+	if (!output || !output->wlr_output || !output->server || !box)
+		return false;
+	if (!output->server->output_layout)
+		return false;
+	wlr_output_layout_get_box(output->server->output_layout,
+		output->wlr_output, box);
+	return box->width > 0 && box->height > 0;
 }
 
 

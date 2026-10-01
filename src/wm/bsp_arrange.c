@@ -15,8 +15,12 @@ static void bsp_node_apply_geometry(struct uwm_bsp_node *node)
 			|| node->y != node->toplevel->scene_tree->node.y)
 		wlr_scene_node_set_position(
 			&node->toplevel->scene_tree->node, node->x, node->y);
-	struct wlr_box geo = toplevel_geometry(node->toplevel);
-	if (node->width != geo.width || node->height != geo.height
+	/* Compare against the last size uwm *requested*, not the client's
+	 * reported geometry: on a client-side-decorated window geo.width is
+	 * the tile minus the frame, so comparing to it re-issues a configure
+	 * on every arrange forever. */
+	if (node->width != node->toplevel->req_width
+			|| node->height != node->toplevel->req_height
 #if WLR_HAS_XWAYLAND
 			|| (node->toplevel->type == UWM_TOPLEVEL_XWAYLAND && node->toplevel->xwayland_surface
 				&& (node->toplevel->xwayland_surface->x != node->x || node->toplevel->xwayland_surface->y != node->y))
@@ -62,7 +66,8 @@ static void bsp_arrange_node_full(
 }
 
 static void bsp_arrange_node(
-	struct uwm_bsp_node *node, int x, int y, int width, int height, int gap)
+	struct uwm_bsp_node *node, int x, int y, int width, int height, int gap,
+	bool ws_monocle)
 {
 	if (width <= 0 || height <= 0)
 		return;
@@ -88,7 +93,12 @@ static void bsp_arrange_node(
 		} else {
 			bsp_arrange_node_full(node->first, x, y, width, height);
 		}
-		update_layout_visibility(node);
+		/* Workspace-level monocle already decided visibility from
+		 * ws->focused in bsp_arrange(). Re-deriving it here from a
+		 * possibly stale container active_child would override that and
+		 * can leave the active monocle window hidden. */
+		if (!ws_monocle)
+			update_layout_visibility(node);
 		break;
 	case UWM_NODE_BSP:
 	default:
@@ -103,8 +113,8 @@ static void bsp_arrange_node(
 				if (first_w < 1) first_w = 1;
 				if (second_w < 1) second_w = 1;
 			}
-			bsp_arrange_node(node->first, x, y, first_w, height, gap);
-			bsp_arrange_node(node->second, x + first_w + gap, y, second_w, height, gap);
+			bsp_arrange_node(node->first, x, y, first_w, height, gap, ws_monocle);
+			bsp_arrange_node(node->second, x + first_w + gap, y, second_w, height, gap, ws_monocle);
 		} else {
 			int first_h = (int)((height - gap) * node->ratio);
 			if (first_h < 1) first_h = 1;
@@ -116,8 +126,8 @@ static void bsp_arrange_node(
 				if (first_h < 1) first_h = 1;
 				if (second_h < 1) second_h = 1;
 			}
-			bsp_arrange_node(node->first, x, y, width, first_h, gap);
-			bsp_arrange_node(node->second, x, y + first_h + gap, width, second_h, gap);
+			bsp_arrange_node(node->first, x, y, width, first_h, gap, ws_monocle);
+			bsp_arrange_node(node->second, x, y + first_h + gap, width, second_h, gap, ws_monocle);
 		}
 		break;
 	}
@@ -169,15 +179,14 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 				continue;
 			if (tl == active_tiled) {
 				wlr_scene_node_set_position(&tl->scene_tree->node, x, y);
-				struct wlr_box g = toplevel_geometry(tl);
-				if (g.width != width || g.height != height)
+				if (tl->req_width != width || tl->req_height != height)
 					toplevel_set_size(tl, width, height);
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, true);
 			} else {
 				wlr_scene_node_set_enabled(&tl->scene_tree->node, false);
 			}
 		}
-		bsp_arrange_node(workspace->root, x, y, width, height, gap);
+		bsp_arrange_node(workspace->root, x, y, width, height, gap, true);
 		if (active_tiled) {
 			wlr_scene_node_set_position(&active_tiled->scene_tree->node, x, y);
 			wlr_scene_node_set_enabled(&active_tiled->scene_tree->node, true);
@@ -189,7 +198,7 @@ void bsp_arrange(struct uwm_workspace *workspace, int x, int y, int width, int h
 			wlr_scene_node_set_position(&tl->scene_tree->node, tl->float_x, tl->float_y);
 		}
 	} else {
-		bsp_arrange_node(workspace->root, x, y, width, height, gap);
+		bsp_arrange_node(workspace->root, x, y, width, height, gap, false);
 		struct uwm_toplevel *tl;
 		wl_list_for_each(tl, &workspace->floating_windows, floating_link) {
 			wlr_scene_node_set_enabled(&tl->scene_tree->node, true);

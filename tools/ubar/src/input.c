@@ -141,27 +141,11 @@ static void pointer_button(void *data, struct wl_pointer *wl_pointer,
 
 static void pointer_axis(void *data, struct wl_pointer *wl_pointer,
 		uint32_t time, uint32_t axis, wl_fixed_t value) {
-	State *state = (State *)data;
-	if (axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
-		return;
-
-	int val = wl_fixed_to_int(value);
-	HotZone *zone = find_zone(state, state->pointer_x);
-	if (!zone || zone->type != ZONE_VOLUME)
-		return;
-
-	if (val > 0) {
-		if (fork() == 0) {
-			execlp("wpctl", "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.05-", NULL);
-			_exit(0);
-		}
-	} else {
-		if (fork() == 0) {
-			execlp("wpctl", "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.05+", NULL);
-			_exit(0);
-		}
-	}
-	/* PulseAudio subscription detects the change via audio_pipe */
+	/* Scroll wheel no longer changes volume: wheel over the bar should
+	 * reach the window underneath. Use XF86AudioRaiseVolume /
+	 * XF86AudioLowerVolume (see KEYS_UNMODIFIED in config.def.h) or
+	 * click the volume zone to toggle mute. */
+	(void)data; (void)wl_pointer; (void)time; (void)axis; (void)value;
 }
 
 static void pointer_frame(void *data, struct wl_pointer *wl_pointer) {}

@@ -36,12 +36,29 @@
 /* spawnable command argv arrays (NULL-terminated) */
 #define TERM        "footclient", NULL
 #define LAUNCHER    "ulaunch", "-D", "-p", "󰀻 Apps: ", NULL
-#define RUN         "bash", "-c", "compgen -c | sort -u | ulaunch -d -p ' Run: ' | xargs -r", NULL
+/* `sh -s` reads the chosen line from stdin and runs it as a shell script, so
+ * tilde expansion, quoting, pipes and globs all work. `xargs -r` does none
+ * of that and ran the command with no arguments at all, which is why
+ * "open this file" style entries silently did nothing. */
+#define RUN         "bash", "-c", "compgen -c | sort -u | ulaunch -d -p ' Run: ' | sh -s", NULL
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy -t image/png", NULL
 #define FILEMGR     "foot", "-e", "lf", NULL
-#define FINDFILE    "sh", "-c", "f=$(cd ~ && fd --type f --hidden --follow --exclude .git --exclude .cache --exclude .local/share --exclude node_modules | ulaunch -d -p '󰈞 Find File: ') && [ -n \"$f\" ] && foot -e bash -c \"cd \\\"$HOME/$f\\\" && nvim \\\"$HOME/$f\\\"\"", NULL
+/* Quick file search.
+ *
+ * Two things were wrong before:
+ *  1. `fd --type f --hidden` over all of $HOME never finishes on a real home
+ *     directory (it had produced 90k lines after 30s and was still going), so
+ *     the launcher never got a usable list. `rg --files` does the same job in
+ *     seconds because it honours .gitignore and skips hidden trees by default,
+ *     which drops node_modules/build output for free. `fd` stays as a fallback
+ *     so a missing ripgrep degrades instead of showing an empty launcher.
+ *  2. `cd "$HOME/$f"` fails, because $f is a FILE and cd needs a directory.
+ *     The `&&` then short-circuits and nvim never runs at all. cd to dirname.
+ * Also uses footclient so it reuses the running terminal instead of opening a
+ * new window every time. */
+#define FINDFILE    "sh", "-c", "f=$(cd \"$HOME\" && { rg --files 2>/dev/null || fd --type f --exclude .git --exclude node_modules 2>/dev/null; } | ulaunch -d -p 'e Find File: ') && [ -n \"$f\" ] && footclient -e bash -c 'cd \"$(dirname \"$1\")\" && exec nvim \"$1\"' _ \"$HOME/$f\"", NULL
 #define POWERMENU   "sh", "-c", "~/.config/custom_scripts/powermenu.sh", NULL
 #define WINSWITCH   "sh", "-c", "~/.config/custom_scripts/window_switcher.sh", NULL
 #define HDMI_SCRIPT "sh", "-c", "~/.config/custom_scripts/hdmi.sh", NULL

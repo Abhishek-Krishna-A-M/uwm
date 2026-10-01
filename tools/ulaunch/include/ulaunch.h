@@ -15,13 +15,10 @@
 #define INPUT_BUF_MAX 512
 #define ENTRIES_INIT 256
 #define VISIBLE_PAD 2
-#define MAX_SCORE_RESULTS 512
 
 enum mode {
 	MODE_DMENU,
 	MODE_DRUN,
-	MODE_WINDOW,
-	MODE_RUN,
 };
 
 struct pool_buffer {
@@ -73,6 +70,16 @@ typedef struct {
 	int n_filtered;
 	int cursor;
 
+	/* Incremental filtering: entries[i] can only match a longer query if it
+	 * already matched the previous (shorter) query, so a plain append
+	 * re-scores just the surviving candidate set instead of every entry.
+	 * Reset to an empty query (backspace / ctrl+u / ctrl+w) forces a full
+	 * rescan. The candidate set itself lives in filter.c and is uncapped;
+	 * n_cand here is only informational. */
+	char prev_input[INPUT_BUF_MAX];
+	int prev_input_len;
+	int n_cand;
+
 	char input[INPUT_BUF_MAX];
 	int input_len;
 	int input_cursor;
@@ -89,6 +96,10 @@ typedef struct {
 	int repeat_delay_ms;
 	int repeat_rate_ms;
 
+	/* cached xkb modifier index for Ctrl — looked up once per keymap
+	 * instead of once per key press */
+	xkb_mod_index_t ctrl_mod_index;
+
 	/* dmenu incremental */
 	char dmenu_buf[4096];
 	int dmenu_buf_len;
@@ -98,7 +109,11 @@ typedef struct {
 uint32_t parse_color(const char *hex);
 void cairo_set_hex(cairo_t *cr, uint32_t color);
 void destroy_buffer(struct pool_buffer *buf);
+/* filter.c owns the match/result arrays; reserve() must be called with the
+ * entry count before filter_update(), and again whenever entries grow. */
+bool filter_reserve(int need);
 void filter_update(void);
+void filter_fini(void);
 
 extern State state;
 extern const struct wl_registry_listener registry_listener;

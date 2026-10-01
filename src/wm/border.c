@@ -57,6 +57,8 @@ void toplevel_create_border(struct uwm_toplevel *t) {
 	wlr_scene_node_set_enabled(&t->border_bottom->node, false);
 	wlr_scene_node_set_enabled(&t->border_left->node, false);
 	wlr_scene_node_set_enabled(&t->border_right->node, false);
+	t->border_shown = false;
+	t->border_x = t->border_y = t->border_w = t->border_h = 0;
 	/* ensure window stays on top of its borders */
 	wlr_scene_node_raise_to_top(&t->scene_tree->node);
 }
@@ -68,6 +70,8 @@ void toplevel_destroy_border(struct uwm_toplevel *t) {
 	if (t->border_left) wlr_scene_node_destroy(&t->border_left->node);
 	if (t->border_right) wlr_scene_node_destroy(&t->border_right->node);
 	t->border_top = t->border_bottom = t->border_left = t->border_right = NULL;
+	t->border_shown = false;
+	t->border_x = t->border_y = t->border_w = t->border_h = 0;
 }
 
 static bool should_show_border(struct uwm_toplevel *t) {
@@ -97,41 +101,45 @@ void toplevel_update_border(struct uwm_toplevel *t) {
 	}
 	ensure_parent(t);
 	bool show = should_show_border(t);
-	wlr_scene_node_set_enabled(&t->border_top->node, show);
-	wlr_scene_node_set_enabled(&t->border_bottom->node, show);
-	wlr_scene_node_set_enabled(&t->border_left->node, show);
-	wlr_scene_node_set_enabled(&t->border_right->node, show);
+
+	/* Early-out when visibility didn't change. raise_to_top() dirties the
+	 * whole parent scene layer, so re-issuing it on every unrelated surface
+	 * commit is the single biggest source of needless repaint here. */
+	if (t->border_shown != show) {
+		t->border_shown = show;
+		wlr_scene_node_set_enabled(&t->border_top->node, show);
+		wlr_scene_node_set_enabled(&t->border_bottom->node, show);
+		wlr_scene_node_set_enabled(&t->border_left->node, show);
+		wlr_scene_node_set_enabled(&t->border_right->node, show);
+	}
 	if (!show) return;
 
 	int bw = borderpx;
 	if (bw <= 0) return;
 
-	struct wlr_box geo = toplevel_geometry(t);
-	int wx = t->scene_tree->node.x;
-	int wy = t->scene_tree->node.y;
-	int x = wx + geo.x;
-	int y = wy + geo.y;
-	int w = geo.width;
-	int h = geo.height;
+	struct wlr_box box = toplevel_content_box(t);
+	int x = box.x;
+	int y = box.y;
+	int w = box.width;
+	int h = box.height;
 	if (w <= 0 || h <= 0) {
 		if (t->floating) {
-			w = t->float_width; h = t->float_height; x = t->float_x; y = t->float_y;
+			w = t->float_width; h = t->float_height;
+			x = t->float_x; y = t->float_y;
 		} else if (t->workspace && t->workspace->root) {
 			struct uwm_bsp_node *leaf = bsp_find_leaf(t->workspace->root, t);
 			if (leaf) { x = leaf->x; y = leaf->y; w = leaf->width; h = leaf->height; }
 		}
 		if (w <= 0 || h <= 0) return;
 	}
-	/* if tiled and still no valid geo, use scene position directly (initial map) */
-	if (w <= 0 || h <= 0) {
-		x = wx; y = wy;
-		/* try to get size from bsp node */
-		if (t->workspace && t->workspace->root) {
-			struct uwm_bsp_node *leaf = bsp_find_leaf(t->workspace->root, t);
-			if (leaf && leaf->width > 0) { w = leaf->width; h = leaf->height; x = leaf->x; y = leaf->y; }
-		}
-		if (w <= 0 || h <= 0) return;
-	}
+
+	if (t->border_x == x && t->border_y == y
+			&& t->border_w == w && t->border_h == h)
+		return; /* geometry unchanged — nothing to damage */
+
+	t->border_x = x; t->border_y = y;
+	t->border_w = w; t->border_h = h;
+
 	/* keep window on top of borders */
 	wlr_scene_node_raise_to_top(&t->scene_tree->node);
 

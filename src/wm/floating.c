@@ -119,7 +119,10 @@ void toggle_floating(struct uwm_toplevel *window)
 			wl_list_for_each(tl, &ws->toplevels, workspace_link) {
 				if (!tl->floating && !tl->fullscreen) count++;
 			}
-			if (count <= 1) {
+			/* Exit only when no tiled window remains — see the matching
+			 * guard in xdg_toplevel_unmap. Floating windows live in
+			 * floating_windows and never counted here. */
+			if (count == 0) {
 				ws->monocle = false;
 				if (ws->root) {
 					bsp_arrange(ws, out_x, out_y, out_w, out_h,
@@ -198,11 +201,24 @@ void toggle_fullscreen(struct uwm_toplevel *window)
 			&window->scene_tree->node,
 			window->server->floating_layer);
 
-		int fs_w = output ? output->wlr_output->width : 0;
-		int fs_h = output ? output->wlr_output->height : 0;
-		wlr_scene_node_set_position(&window->scene_tree->node, 0, 0);
+		/* Size and position in logical layout coordinates. The window now
+		 * lives in the global floating_layer, so it has to be placed at the
+		 * output's layout origin — (0,0) only works for a single unscaled
+		 * output. wlr_output->width/height are physical pixels and would
+		 * oversize the window by the output scale factor. */
+		struct wlr_box box;
+		if (!output || !output_logical_box(output, &box)) {
+			/* Fall back to the usable area rather than leaving the window
+			 * un-sized after it has already been reparented and flagged
+			 * fullscreen. */
+			box.x = 0; box.y = 0;
+			box.width = output ? output->usable_area.width : 0;
+			box.height = output ? output->usable_area.height : 0;
+		}
+		wlr_scene_node_set_position(&window->scene_tree->node, box.x, box.y);
 		toplevel_set_fullscreen(window, true);
-		toplevel_set_size(window, fs_w, fs_h);
+		if (box.width > 0 && box.height > 0)
+			toplevel_set_size(window, box.width, box.height);
 
 		wlr_scene_node_raise_to_top(&window->scene_tree->node);
 

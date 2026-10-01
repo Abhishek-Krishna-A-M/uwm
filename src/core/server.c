@@ -130,6 +130,12 @@ static void uwm_session_destroy(struct uwm_server *server) {
 }
 
 bool server_init(struct uwm_server *server) {
+	/* Publish the global before anything can dispatch a client request.
+	 * It used to be assigned in keyboard_handle_key(), which meant it was
+	 * NULL for the whole of startup and any path reached before the first
+	 * key press — a live crash source for anything that used it. */
+	uwm_server = server;
+
 	/* Set up signal handling with SA_RESTART to prevent signals from
 	 * interrupting blocking syscalls (crucial during VT switch).
 	 * SIGCHLD must retain its default disposition. wlroots uses SIGCHLD to

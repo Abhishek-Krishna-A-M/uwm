@@ -223,9 +223,10 @@ void workspace_move_toplevel(struct uwm_toplevel *toplevel, uint32_t workspace)
 			int count = 0;
 			struct uwm_toplevel *tl;
 			wl_list_for_each(tl, &old_ws->toplevels, workspace_link) {
-				count++;
+				if (!tl->floating && !tl->fullscreen) count++;
 			}
-			if (count <= 1) {
+			/* matches floating.c / xdg_toplevel_unmap: exit only when empty */
+			if (count == 0) {
 				old_ws->monocle = false;
 				if (old_ws->root) {
 					workspace_arrange_on_output(old_ws, old_ws->output,
@@ -317,11 +318,11 @@ void workspace_cycle_next(struct uwm_server *server)
 
 	/* also warp cursor to centered window */
 	if (next_tl && next_tl->scene_tree) {
-		struct wlr_box geo = toplevel_geometry(next_tl);
-		double wx = next_tl->scene_tree->node.x + geo.x;
-		double wy = next_tl->scene_tree->node.y + geo.y;
-		double ww = geo.width;
-		double wh = geo.height;
+		struct wlr_box box = toplevel_content_box(next_tl);
+		double wx = box.x;
+		double wy = box.y;
+		double ww = box.width;
+		double wh = box.height;
 		if (ww > 0 && wh > 0) {
 			wlr_cursor_warp(server->cursor, NULL, wx + ww / 2.0, wy + wh / 2.0);
 			/* ensure pointer focus follows warp */

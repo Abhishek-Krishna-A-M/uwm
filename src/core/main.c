@@ -16,6 +16,23 @@
 #include "layer_shell.h"
 #include "idle_inhibit.h"
 
+/* Crash handling.
+ *
+ * Recovering in-process with siglongjmp() re-enters wl_display_run() at an
+ * arbitrary point with libinput/DRM/dmabuf state half-torn down. If the crash
+ * is deterministic (which it usually is — the same client event replays) the
+ * retry crashes immediately, and because the handler stays armed it loops
+ * siglongjmp -> wl_display_run -> crash -> siglongjmp forever. That is a
+ * 100% CPU spin with no input processing and no repaints: the whole desktop
+ * looks dead, and only killing the process (or a lucky state change) recovers.
+ *
+ * So: allow a small number of in-process retries, each of which disarms the
+ * handler first, then fall back to execv() so the compositor restarts from a
+ * clean address space. Clients reconnect on their own. */
+#define UWM_MAX_CRASH_RESTARTS 3
+
+static int crash_restarts;
+
 static void crash_handler(int sig) {
 	if (g_crash_jmpbuf_valid) {
 		g_crash_jmpbuf_valid = 0;
@@ -224,21 +241,47 @@ int main(int argc, char *argv[]) {
 	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", server.socket);
 
 	struct sigaction old_handlers[5];
-	install_crash_handlers(old_handlers);
+	/* Escape hatch for debugging: our SIGSEGV/SIGABRT handlers replace
+	 * whatever was there (including ASan's), so a sanitizer or gdb run
+	 * needs to be able to keep the original handler and see the real
+	 * fault instead of a re-raised default action. */
+	if (!getenv("UWM_NO_CRASH_HANDLER"))
+		install_crash_handlers(old_handlers);
 
-	if (sigsetjmp(g_crash_jmpbuf, 1) == 0) {
+	/* Bounded recovery loop. Each iteration arms the handler for exactly one
+	 * fault; the handler clears g_crash_jmpbuf_valid before jumping, so a
+	 * fault inside the recovery path escalates to SIG_DFL instead of
+	 * re-entering the loop. Once the budget is spent we re-exec. */
+	while (crash_restarts < UWM_MAX_CRASH_RESTARTS) {
 		g_crash_jmpbuf_valid = 1;
-		wl_display_run(server.wl_display);
+		if (sigsetjmp(g_crash_jmpbuf, 1) == 0) {
+			wl_display_run(server.wl_display);
+			g_crash_jmpbuf_valid = 0;
+			break;
+		}
+		crash_restarts++;
 		g_crash_jmpbuf_valid = 0;
-	} else {
-		g_crash_jmpbuf_valid = 0;
+
+		if (crash_restarts >= UWM_MAX_CRASH_RESTARTS) {
+			/* Re-exec rather than keep limping along a torn-down state.
+			 * restore_crash_handlers() below never runs on this path. */
+			char msg[96];
+			int n = snprintf(msg, sizeof(msg),
+				"UWM: crash budget exhausted, re-exec\n");
+			if (n > 0) {
+				ssize_t ignored = write(STDERR_FILENO, msg, (size_t)n);
+				(void)ignored;
+			}
+			restore_crash_handlers(old_handlers);
+			execv(argv[0], argv);
+			/* execv only returns on failure — fall through and exit. */
+			break;
+		}
+
 		write(STDERR_FILENO, "UWM: recovered, rebuilding\n", 28);
 		uwm_rebuild_session_listeners(&server);
 		uwm_call_session_active(&server);
 		write(STDERR_FILENO, "UWM: restarting event loop\n", 28);
-		g_crash_jmpbuf_valid = 1;
-		wl_display_run(server.wl_display);
-		g_crash_jmpbuf_valid = 0;
 	}
 
 	restore_crash_handlers(old_handlers);
