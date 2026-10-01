@@ -48,8 +48,35 @@ struct wlr_box toplevel_geometry(struct uwm_toplevel *t) {
 	return box;
 }
 
+/* The visible content of a toplevel, in layout coordinates.
+ *
+ * `wlr_scene_xdg_surface_create()` documents that "the origin of the
+ * returned scene-graph node will match the top-left corner of the
+ * xdg_surface window geometry" — wlroots internally offsets the surface
+ * by -geo.x/-geo.y inside the tree. Therefore scene_tree->node.x/y is
+ * already the content origin; adding geo.x/geo.y again double-counts the
+ * frame inset and shifts borders/cursor math on every client-side
+ * decorated client (e.g. a browser with a non-system title bar). */
+struct wlr_box toplevel_content_box(struct uwm_toplevel *t) {
+	struct wlr_box box = {0};
+	if (!t) return box;
+	struct wlr_box geo = toplevel_geometry(t);
+	box.x = t->scene_tree ? t->scene_tree->node.x : 0;
+	box.y = t->scene_tree ? t->scene_tree->node.y : 0;
+	box.width = geo.width;
+	box.height = geo.height;
+	return box;
+}
+
 void toplevel_set_size(struct uwm_toplevel *t, int w, int h) {
 	if (!t) return;
+	/* Record what we asked for. The client's reported geometry differs
+	 * from the requested size on client-side-decorated windows (the frame
+	 * is not part of geometry.width), so comparing against it to decide
+	 * whether a configure is needed produces a permanent configure loop
+	 * on those clients. */
+	t->req_width = w;
+	t->req_height = h;
 	if (t->type == UWM_TOPLEVEL_XDG && t->xdg_toplevel) {
 		wlr_xdg_toplevel_set_size(t->xdg_toplevel, w, h);
 	}

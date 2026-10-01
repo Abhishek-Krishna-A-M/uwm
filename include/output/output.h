@@ -51,6 +51,12 @@ void output_set_workspace(struct uwm_output *output, uint32_t workspace_id);
 struct uwm_output *output_from_wlr_output(struct uwm_server *server,
 	struct wlr_output *wlr_output);
 struct uwm_output *output_first(struct uwm_server *server);
+
+/* Logical (layout-space) bounding box of an output, including its lx/ly.
+ * Scene coordinates are logical, so anything that builds a screen-space
+ * constraint box (popup unconstrain, fullscreen sizing) must use this and
+ * never wlr_output->width/height, which is the physical pixel count. */
+bool output_logical_box(struct uwm_output *output, struct wlr_box *box);
 /* Output layout change callback (hooked in server.c) */
 void handle_output_layout_change(struct wl_listener *listener, void *data);
 

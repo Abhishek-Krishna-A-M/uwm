@@ -172,8 +172,6 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 	struct wlr_keyboard_key_event *event = data;
 	struct wlr_seat *seat = server->seat;
 
-	uwm_server = server;
-
 	uint32_t keycode = event->keycode + 8;
 
 	struct xkb_keymap *keymap = keyboard->wlr_keyboard->keymap;

@@ -115,3 +115,7 @@ build/uwm
 backup/core.*
 backup/core
 
+
+# python bytecode cache from tests/
+__pycache__/
+*.pyc

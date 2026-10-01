@@ -166,10 +166,10 @@ int mode_drun(void) {
 	state.exec_cmds = sorted_execs;
 	free(order);
 
-	state.filtered = malloc(sizeof(int) * state.n_entries);
-	if (!state.filtered) return 1;
-	state.scores = malloc(sizeof(float) * state.n_entries);
-	if (!state.scores) return 1;
+	/* filter.c owns filtered/scores and sizes them itself, with a floor of
+	 * the result cap so a short .desktop list cannot under-allocate it. */
+	if (!filter_reserve(state.n_entries)) return 1;
+
 	state.hits = calloc(state.n_entries, sizeof(int));
 	if (!state.hits) return 1;
 

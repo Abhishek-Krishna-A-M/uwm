@@ -265,7 +265,10 @@ void render_frame(void) {
 	state.frame_pending = true;
 
 	wl_surface_attach(state.surface, buf->buffer, 0, 0);
-	wl_surface_damage(state.surface, 0, 0, o_w, buf->height);
+	/* damage_buffer, not damage: the damage rect is in buffer coordinates,
+	 * which stay correct if the surface is ever given a viewport/scale. */
+	wl_surface_damage_buffer(state.surface, 0, 0, o_w, buf->height);
 	wl_surface_commit(state.surface);
-	wl_display_flush(state.display);
+	/* main() flushes — flushing here too would just be a second syscall
+	 * and, when the socket is full, a second EAGAIN round trip */
 }

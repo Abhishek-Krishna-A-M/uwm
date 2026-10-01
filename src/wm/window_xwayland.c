@@ -16,6 +16,7 @@
 #include "server.h"
 #include "rules.h"
 #include "output.h"
+#include "layer_shell.h"
 #include "uwm_bar.h"
 #include <wlr/config.h>
 
@@ -460,14 +461,6 @@ void server_new_xwayland_surface(struct wl_listener *listener, void *data) {
 }
 #endif
 
-static void xdg_popup_commit(struct wl_listener *listener, void *data) {
-	struct uwm_popup *popup = wl_container_of(listener, popup, commit);
-
-	if (popup->xdg_popup->base->initial_commit) {
-		wlr_xdg_surface_schedule_configure(popup->xdg_popup->base);
-	}
-}
-
 static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
 	struct uwm_popup *popup = wl_container_of(listener, popup, destroy);
 
@@ -477,6 +470,143 @@ static void xdg_popup_destroy(struct wl_listener *listener, void *data) {
 	free(popup);
 }
 
+/* Find the scene tree to parent a new popup into, and the toplevel that owns
+ * it. Walks the xdg_surface chain explicitly instead of trusting
+ * `xdg_surface->data`, and resolves the owning toplevel by role so no
+ * scene-tree -> uwm_toplevel pointer cast is involved anywhere.
+ *
+ * Handles two parent kinds:
+ *   - a regular xdg toplevel (any role we assigned a scene tree to), and
+ *   - a layer surface. GTK creates menus/popovers parented to a layer
+ *     surface (bar, notification daemon, launcher) as *layer shell* popups;
+ *     those surface as an xdg_popup whose parent wl_surface is the layer
+ *     surface, so there is no xdg_surface to walk. Without this branch they
+ *     are silently dropped.
+ *
+ * Walks: popup -> ... -> popup -> toplevel. The immediate parent's scene tree
+ * is only accepted for a parent we set up ourselves (we assign
+ * `xdg_surface->data` for toplevels in server_new_xdg_toplevel and for popups
+ * in server_new_xdg_popup, and `scene_layer_surface->tree` for layer
+ * surfaces). Anything else yields NULL and the popup is skipped cleanly
+ * instead of casting an unrelated pointer. */
+static struct wlr_scene_tree *popup_scene_parent(struct wlr_xdg_popup *xdg_popup,
+		struct uwm_toplevel **out_toplevel, struct uwm_output **out_output) {
+	struct wlr_surface *surface = xdg_popup->parent;
+	struct wlr_scene_tree *parent_tree = NULL;
+
+	if (out_toplevel)
+		*out_toplevel = NULL;
+	if (out_output)
+		*out_output = NULL;
+
+	while (surface) {
+		struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(surface);
+		if (!xdg) {
+			/* Layer-surface popup: parent straight into the layer
+			 * surface's scene tree. node is the first member of
+			 * wlr_scene_tree, and the type check validates it. */
+			struct wlr_layer_surface_v1 *layer =
+				wlr_layer_surface_v1_try_from_wlr_surface(surface);
+			struct uwm_layer_surface *ls = layer ? layer->data : NULL;
+			if (!ls || !ls->scene_node)
+				return NULL;
+			if (ls->scene_node->type != WLR_SCENE_NODE_TREE)
+				return NULL;
+			if (!parent_tree)
+				parent_tree = (struct wlr_scene_tree *)ls->scene_node;
+			if (out_output && !*out_output)
+				*out_output = ls->output;
+			return parent_tree;
+		}
+
+		if (xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+			/* `xdg_surface->data` is the toplevel's *scene tree*, not the
+			 * uwm_toplevel — server_new_xdg_toplevel() sets
+			 * `scene_tree->node.data = toplevel`. The toplevel owns the
+			 * scene tree that a first-level popup hangs from; for a nested
+			 * popup we already captured the immediate parent popup's tree
+			 * on the previous iteration, so don't clobber it. */
+			struct wlr_scene_tree *tree = xdg->data;
+			if (!parent_tree)
+				parent_tree = tree;
+			if (out_toplevel)
+				*out_toplevel = tree ? tree->node.data : NULL;
+			return parent_tree;
+		}
+
+		if (xdg->role == WLR_XDG_SURFACE_ROLE_POPUP) {
+			if (!parent_tree)
+				parent_tree = xdg->data;
+			if (!xdg->popup || !xdg->popup->parent)
+				return NULL;
+			surface = xdg->popup->parent;
+			continue;
+		}
+
+		return NULL; /* role not yet assigned */
+	}
+
+	return NULL;
+}
+
+static struct uwm_output *popup_output(struct uwm_popup *popup) {
+	struct uwm_toplevel *toplevel = popup->parent_toplevel;
+	if (toplevel && toplevel->workspace && toplevel->workspace->output)
+		return toplevel->workspace->output;
+	if (popup->parent_output)
+		return popup->parent_output;
+
+	struct uwm_server *server = popup->popup_server;
+	if (!server)
+		return NULL;
+	return server->active_output ? server->active_output : output_first(server);
+}
+
+/* Constrain the popup to the output's logical box so a context menu opened
+ * near a screen edge is flipped back on-screen by wlroots instead of running
+ * off it.
+ *
+ * This must run on every commit, not just at creation: xdg-shell v3 clients
+ * (GTK3 menus, Chromium context menus) re-position on pointer motion and on
+ * anchor/gravity changes via xdg_popup.reposition, and wlroots recomputes the
+ * position from the constraint box on every one of those.
+ *
+ * The box must be in logical layout coordinates — scene node positions are
+ * logical, so using wlr_output->width/height (physical pixels) alongside a
+ * logical lx/ly mis-sizes the box by the output scale factor and pushes
+ * menus off the screen on any HiDPI output.
+ *
+ * This must run from the commit handler, not at popup creation:
+ * wlr_xdg_popup_unconstrain_from_box() asserts surface->initialized, and that
+ * flag is only set once the popup's xdg_surface has been committed. Calling it
+ * from server_new_xdg_popup aborts the compositor on the first menu. The
+ * commit handler is also the correct place semantically: xdg-shell v3 clients
+ * re-position on pointer motion and on anchor/gravity changes via
+ * xdg_popup.reposition, and wlroots recomputes the position from the
+ * constraint box on every one of those. */
+static void popup_unconstrain(struct uwm_popup *popup) {
+	if (!popup->xdg_popup->base->initialized)
+		return;
+	struct uwm_output *output = popup_output(popup);
+	struct wlr_box box;
+	if (!output || !output_logical_box(output, &box)) {
+		wlr_log(WLR_DEBUG, "popup %p: no output box to constrain to",
+			(void *)popup->xdg_popup);
+		return;
+	}
+	wlr_xdg_popup_unconstrain_from_box(popup->xdg_popup, &box);
+}
+
+static void xdg_popup_commit(struct wl_listener *listener, void *data) {
+	struct uwm_popup *popup = wl_container_of(listener, popup, commit);
+
+	popup_unconstrain(popup);
+
+	if (popup->xdg_popup->base->initial_commit) {
+		wlr_xdg_surface_schedule_configure(popup->xdg_popup->base);
+	}
+}
+
 void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 	struct wlr_xdg_popup *xdg_popup = data;
 
@@ -484,6 +614,7 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 	if (!popup)
 		return;
 	popup->xdg_popup = xdg_popup;
+	popup->popup_server = uwm_server;
 
 	/* Wire listeners FIRST so the client always receives a configure
 	 * event on commit. If scene-tree setup fails below, the popup
@@ -494,45 +625,32 @@ void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 	popup->destroy.notify = xdg_popup_destroy;
 	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
 
-	struct wlr_xdg_surface *parent = wlr_xdg_surface_try_from_wlr_surface(xdg_popup->parent);
-	if (!parent) {
-		wl_list_remove(&popup->commit.link);
-		wl_list_remove(&popup->destroy.link);
-		free(popup);
-		return;
-	}
-	struct wlr_scene_tree *parent_tree = parent->data;
+	struct uwm_toplevel *parent_toplevel = NULL;
+	struct uwm_output *parent_output = NULL;
+	struct wlr_scene_tree *parent_tree =
+		popup_scene_parent(xdg_popup, &parent_toplevel, &parent_output);
+	popup->parent_toplevel = parent_toplevel;
+	popup->parent_output = parent_output;
+
 	if (!parent_tree) {
-		wl_list_remove(&popup->commit.link);
-		wl_list_remove(&popup->destroy.link);
-		free(popup);
-		return;
-	}
-	xdg_popup->base->data = wlr_scene_xdg_surface_create(parent_tree, xdg_popup->base);
-	if (!xdg_popup->base->data) {
+		wlr_log(WLR_DEBUG, "xdg_popup: no scene parent, popup will not render");
 		wl_list_remove(&popup->commit.link);
 		wl_list_remove(&popup->destroy.link);
 		free(popup);
 		return;
 	}
 
-	/* Find the parent toplevel and its output, then unconstrain the
-	 * popup to the output's bounds so context menus near the screen
-	 * edge are repositioned by wlroots to stay on-screen. */
-	struct uwm_toplevel *toplevel = NULL;
-	struct wlr_scene_tree *tree = parent_tree;
-	while (tree && !tree->node.data)
-		tree = tree->node.parent;
-	if (tree)
-		toplevel = tree->node.data;
-	if (toplevel && toplevel->workspace && toplevel->workspace->output) {
-		struct uwm_output *output = toplevel->workspace->output;
-		struct wlr_box box = {
-			.x = output->lx,
-			.y = output->ly,
-			.width = output->wlr_output->width,
-			.height = output->wlr_output->height,
-		};
-		wlr_xdg_popup_unconstrain_from_box(xdg_popup, &box);
+	struct wlr_scene_tree *tree =
+		wlr_scene_xdg_surface_create(parent_tree, xdg_popup->base);
+	if (!tree) {
+		wlr_log(WLR_ERROR, "xdg_popup: scene tree creation failed");
+		wl_list_remove(&popup->commit.link);
+		wl_list_remove(&popup->destroy.link);
+		free(popup);
+		return;
 	}
+	xdg_popup->base->data = tree;
+
+	/* Keep the popup above its siblings inside the parent surface tree. */
+	wlr_scene_node_raise_to_top(&tree->node);
 }

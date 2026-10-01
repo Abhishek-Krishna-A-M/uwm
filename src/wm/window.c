@@ -104,8 +104,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 			int w = o->usable_area.width - 2 * ogap;
 			int h = o->usable_area.height - 2 * ogap;
 			wlr_scene_node_set_position(&active_tiled->scene_tree->node, x, y);
-			struct wlr_box cur = toplevel_geometry(active_tiled);
-			if (cur.width != w || cur.height != h)
+			/* Only reconfigure when the size we last requested differs.
+			 * Comparing to the reported geometry re-sends a configure on
+			 * every focus change for client-side-decorated windows, whose
+			 * geometry is smaller than the requested size by the frame. */
+			if (active_tiled->req_width != w || active_tiled->req_height != h)
 				toplevel_set_size(active_tiled, w, h);
 		}
 		wl_list_for_each(tl, &ws->floating_windows, floating_link) {
@@ -155,11 +158,11 @@ void focus_toplevel(struct uwm_toplevel *toplevel) {
 	 * Warp is surprising and doubles motion events. Only warp when
 	 * focus_follows_pointer is off (explicit keyboard focus). */
 	if (server->cursor_mode == UWM_CURSOR_PASSTHROUGH && !ws->focus_follows_pointer) {
-		struct wlr_box geo = toplevel_geometry(toplevel);
-		double wx = toplevel->scene_tree->node.x + geo.x;
-		double wy = toplevel->scene_tree->node.y + geo.y;
-		double ww = geo.width;
-		double wh = geo.height;
+		struct wlr_box box = toplevel_content_box(toplevel);
+		double wx = box.x;
+		double wy = box.y;
+		double ww = box.width;
+		double wh = box.height;
 		bool inside = ww > 0 && wh > 0 &&
 			server->cursor->x >= wx && server->cursor->x < wx + ww &&
 			server->cursor->y >= wy && server->cursor->y < wy + wh;
@@ -225,14 +228,22 @@ struct uwm_toplevel *desktop_toplevel_at(
 		break;
 	} while (true);
 
+	/* Walk up to the owning uwm_toplevel. Only scene *trees* carry uwm
+	 * data — rects and buffers never do — and a layer surface's tree
+	 * holds a `struct uwm_layer_surface *` instead, which must never be
+	 * reinterpreted as a toplevel. The scene_tree back-pointer check
+	 * validates the association and fails closed. */
 	struct wlr_scene_tree *tree = node->parent;
-	while (tree != NULL && tree->node.data == NULL) {
+	while (tree != NULL) {
+		struct wlr_scene_node *n = &tree->node;
+		if (n->type == WLR_SCENE_NODE_TREE && n->data != NULL) {
+			struct uwm_toplevel *t = n->data;
+			if (t->scene_tree == tree)
+				return t;
+		}
 		tree = tree->node.parent;
 	}
-	if (!tree)
-		return NULL;
-	struct uwm_toplevel *result = tree->node.data;
-	return result;
+	return NULL;
 }
 
 static void handle_foreign_toplevel_request_activate(
@@ -431,7 +442,17 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	bool focus_was_displaced = (ws->focused == toplevel);
 	if (focus_was_displaced) {
 		ws->focused = NULL;
-		if (bsp_sibling) ws->focused = bsp_sibling;
+		/* Prefer the window that was focused *before* the closing one.
+		 * focus_toplevel() stores it in last_focused, and in monocle it is
+		 * exactly the window that was visible. Falling straight through to
+		 * the head of the toplevel list instead makes monocle jump to an
+		 * arbitrary window every time a transient dialog (file picker,
+		 * upload box, menu) unmaps. */
+		if (ws->last_focused && ws->last_focused != toplevel
+				&& !ws->last_focused->fullscreen) {
+			ws->focused = ws->last_focused;
+		}
+		if (!ws->focused && bsp_sibling) ws->focused = bsp_sibling;
 		if (!ws->focused) {
 			struct uwm_toplevel *candidate;
 			wl_list_for_each(candidate, &ws->toplevels, workspace_link) { ws->focused = candidate; break; }
@@ -447,8 +468,13 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	if (ws->monocle) {
 		int tiled_count = 0;
 		struct uwm_toplevel *_tl;
-		wl_list_for_each(_tl, &ws->toplevels, workspace_link) tiled_count++;
-		if (tiled_count <= 1) will_exit_monocle = true;
+		wl_list_for_each(_tl, &ws->toplevels, workspace_link) {
+			if (!_tl->floating && !_tl->fullscreen) tiled_count++;
+		}
+		/* Only leave monocle once nothing is left to stack. Exiting at
+		 * <= 1 would collapse a 1-window monocle workspace every time a
+		 * transient dialog opens and closes. */
+		if (tiled_count == 0) will_exit_monocle = true;
 	}
 	if (will_exit_monocle) ws->monocle = false;
 	/* single arrange */
@@ -490,7 +516,6 @@ static void decoration_handle_request_mode(struct wl_listener *listener, void *d
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
-	toplevel_update_border(toplevel);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		if (toplevel->decoration) {

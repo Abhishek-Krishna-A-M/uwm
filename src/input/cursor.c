@@ -152,9 +152,9 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 				}
 			}
 			if (ftl && ftl->scene_tree) {
-				struct wlr_box geo = toplevel_geometry(ftl);
-				double tx = ftl->scene_tree->node.x + geo.x;
-				double ty = ftl->scene_tree->node.y + geo.y;
+				struct wlr_box box = toplevel_content_box(ftl);
+				double tx = box.x;
+				double ty = box.y;
 				double nsx = server->cursor->x - tx;
 				double nsy = server->cursor->y - ty;
 				wlr_seat_pointer_notify_motion(seat, time, nsx, nsy);

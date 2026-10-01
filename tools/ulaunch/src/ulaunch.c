@@ -108,9 +108,10 @@ static void print_usage(const char *name) {
 	fprintf(stderr, "  -D, --drun       drun mode (list desktop entries)\n");
 	fprintf(stderr, "  -p, --prompt STR prompt string\n");
 	fprintf(stderr, "  -c, --config PATH config file path\n");
-	fprintf(stderr, "     --daemon      run as background daemon (drun)\n");
-	fprintf(stderr, "     --quit        quit running daemon\n");
 	fprintf(stderr, "  -h, --help       show this help\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Free-form commands: pipe a list in and read the choice back out,\n");
+	fprintf(stderr, "e.g.  compgen -c | sort -u | ulaunch -d -p 'Run: ' | sh -s\n");
 }
 
 /* ====== Main ====== */
@@ -227,9 +228,12 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, SIG_IGN);
 
 	while (state.running) {
-		if (state.need_redraw && state.configured) {
+		/* Don't queue a new frame while one is still in flight: the
+		 * buffer pool is only 3 deep, and back-to-back full repaints of a
+		 * full-output-sized surface are pure waste. */
+		if (state.need_redraw && state.configured && !state.frame_pending) {
 			render_frame();
-			state.need_redraw = false;
+			if (state.frame_pending) state.need_redraw = false;
 		}
 
 		if (wl_display_flush(state.display) < 0) {
@@ -271,9 +275,13 @@ int main(int argc, char **argv) {
 		}
 
 		if (stdin_idx >= 0 && (fds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
-			dmenu_pump();
-			filter_update();
-			state.need_redraw = true;
+			/* Only re-filter when entries actually arrived. A POLLHUP
+			 * wakeup with no new data would otherwise re-score the whole
+			 * list for nothing. */
+			if (dmenu_pump() > 0) {
+				filter_update();
+				state.need_redraw = true;
+			}
 		}
 
 		if (fds[timer_idx].revents & POLLIN) {
@@ -329,9 +337,8 @@ int main(int argc, char **argv) {
 	}
 	free(state.entries);
 	free(state.exec_cmds);
-	free(state.filtered);
-	free(state.scores);
 	free(state.hits);
+	filter_fini();
 
 	if (state.theme.font_desc)
 		pango_font_description_free(state.theme.font_desc);

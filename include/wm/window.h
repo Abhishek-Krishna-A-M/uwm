@@ -43,10 +43,17 @@ struct uwm_toplevel {
 	struct wlr_scene_rect *border_bottom;
 	struct wlr_scene_rect *border_left;
 	struct wlr_scene_rect *border_right;
+	/* last applied border box + visibility, so repeated updates that
+	 * change nothing can skip raise_to_top()/rect resizing */
+	int border_x, border_y, border_w, border_h;
 
 	/* --- geometry --- */
 	int float_x, float_y, float_width, float_height;
 	int saved_x, saved_y, saved_width, saved_height;
+	/* last size uwm *requested* from the client (not the client's
+	 * reported geometry — those differ by the frame inset on CSD
+	 * clients) */
+	int req_width, req_height;
 
 	/* --- decoration --- */
 	struct wlr_xdg_toplevel_decoration_v1 *decoration;
@@ -72,6 +79,7 @@ struct uwm_toplevel {
 	unsigned int saved_floating : 1;
 	unsigned int bsp_saved_is_second : 1;
 	unsigned int bsp_saved : 1;
+	unsigned int border_shown : 1;
 
 	/* --- listeners (cold path) --- */
 	struct wl_listener map;
@@ -98,6 +106,12 @@ struct uwm_toplevel {
 
 struct uwm_popup {
 	struct wlr_xdg_popup *xdg_popup;
+	struct uwm_server *popup_server;
+	/* owning toplevel, resolved by walking xdg_surface roles at creation
+	 * (avoids ever casting a scene node to a toplevel) */
+	struct uwm_toplevel *parent_toplevel;
+	/* set for layer-shell popups, which have no owning toplevel */
+	struct uwm_output *parent_output;
 	struct wl_listener commit;
 	struct wl_listener destroy;
 };
@@ -111,6 +125,11 @@ struct uwm_toplevel *desktop_toplevel_at(
 /* helpers — type-agnostic */
 struct wlr_surface *toplevel_surface(struct uwm_toplevel *t);
 struct wlr_box toplevel_geometry(struct uwm_toplevel *t);
+/* Content box (the visible window geometry) in layout coordinates.
+ * wlroots already places the xdg scene node so that its origin coincides
+ * with the window-geometry origin, so scene_tree->node.x/y already *is*
+ * the content position — the geometry x/y offset must NOT be added again. */
+struct wlr_box toplevel_content_box(struct uwm_toplevel *t);
 void toplevel_set_size(struct uwm_toplevel *t, int w, int h);
 void toplevel_set_activated(struct uwm_toplevel *t, bool activated);
 void toplevel_set_fullscreen(struct uwm_toplevel *t, bool fs);

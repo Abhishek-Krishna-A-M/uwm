@@ -7,43 +7,74 @@
 #include <fcntl.h>
 #include <errno.h>
 
-static void grow_arrays(void) {
-	state.cap_entries *= 2;
-	state.entries = realloc(state.entries, sizeof(char *) * state.cap_entries);
-	state.filtered = realloc(state.filtered, sizeof(int) * state.cap_entries);
-	state.scores = realloc(state.scores, sizeof(float) * state.cap_entries);
+/* Read size for the stdin entry stream. A bulk producer (rg --files, compgen
+ * -c, fd) emits hundreds of KB to a few MB; at 4 KB per read that is hundreds
+ * of poll wakeups and hundreds of full re-filters before the launcher settles.
+ * 64 KB matches the default pipe capacity, so a burst arrives in a handful of
+ * reads. */
+#define DMENU_READ_CHUNK 65536
+
+/* Grow the entry array and keep the filter's arrays in step. filter.c owns
+ * filtered/scores, so they are resized through filter_reserve() rather than
+ * directly. */
+static bool grow_arrays(void) {
+	size_t new_cap = (size_t)state.cap_entries * 2;
+	char **e = realloc(state.entries, sizeof(char *) * new_cap);
+	if (!e) return false;
+	state.entries = e;
+
+	if (!filter_reserve((int)new_cap)) return false;
+
+	state.cap_entries = (int)new_cap;
+	return true;
 }
 
-void dmenu_pump(void) {
-	char buf[4096];
+/* Append one input line as an entry. Returns false on OOM. */
+static bool push_entry(const char *line) {
+	if (state.n_entries >= state.cap_entries && !grow_arrays())
+		return false;
+	state.entries[state.n_entries] = strdup(line);
+	if (!state.entries[state.n_entries])
+		return false;
+	state.n_entries++;
+	/* n_entries can reach cap_entries exactly, so make sure the filter
+	 * arrays can hold it before filter_update() indexes them. */
+	if (!filter_reserve(state.n_entries))
+		return false;
+	return true;
+}
+
+int dmenu_pump(void) {
+	char buf[DMENU_READ_CHUNK];
+	int before = state.n_entries;
+
 	int n = read(STDIN_FILENO, buf, sizeof(buf));
 	if (n < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+		if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
 		state.dmenu_stdin_done = true;
-		return;
+		return 0;
 	}
 	if (n == 0) {
 		if (state.dmenu_buf_len > 0) {
 			state.dmenu_buf[state.dmenu_buf_len] = '\0';
 			state.dmenu_buf_len = 0;
-			if (state.n_entries >= state.cap_entries) grow_arrays();
-			state.entries[state.n_entries++] = strdup(state.dmenu_buf);
+			push_entry(state.dmenu_buf);
 		}
 		state.dmenu_stdin_done = true;
-		return;
+		return state.n_entries - before;
 	}
 	for (int i = 0; i < n; i++) {
 		if (buf[i] == '\n') {
 			if (state.dmenu_buf_len > 0) {
 				state.dmenu_buf[state.dmenu_buf_len] = '\0';
 				state.dmenu_buf_len = 0;
-				if (state.n_entries >= state.cap_entries) grow_arrays();
-				state.entries[state.n_entries++] = strdup(state.dmenu_buf);
+				push_entry(state.dmenu_buf);
 			}
 		} else if (state.dmenu_buf_len < (int)sizeof(state.dmenu_buf) - 1) {
 			state.dmenu_buf[state.dmenu_buf_len++] = buf[i];
 		}
 	}
+	return state.n_entries - before;
 }
 
 int mode_dmenu(void) {
@@ -54,13 +85,7 @@ int mode_dmenu(void) {
 	state.cap_entries = ENTRIES_INIT;
 	state.entries = malloc(sizeof(char *) * state.cap_entries);
 	if (!state.entries) return 1;
-
-	int init_cap = state.cap_entries > MAX_SCORE_RESULTS
-		? state.cap_entries : MAX_SCORE_RESULTS;
-	state.filtered = malloc(sizeof(int) * init_cap);
-	if (!state.filtered) return 1;
-	state.scores = malloc(sizeof(float) * init_cap);
-	if (!state.scores) return 1;
+	if (!filter_reserve(ENTRIES_INIT)) return 1;
 
 	state.dmenu_buf_len = 0;
 	state.dmenu_stdin_done = false;
