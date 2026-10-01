@@ -9,7 +9,7 @@
       eachSystem = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
 
       version =
-        "0.9.1"
+        "1.1.0"
         + nixpkgs.lib.optionalString (self ? shortRev && self.shortRev != null) "+git.${self.shortRev}";
 
       # wlroots-0.20.pc references these through Requires.private. The root
