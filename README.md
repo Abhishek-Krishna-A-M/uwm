@@ -2,88 +2,7 @@
 
 UWM is a lightweight BSP-based Wayland compositor built on wlroots, inspired by bspwm and dwl. It focuses on simplicity, performance, and a keyboard-driven workflow.
 
-## Release 1.1.0
-
-UWM 1.1.0 is a correctness and robustness release. The headline item is that
-context menus work: right-click menus, `<select>` dropdowns and overlay
-settings panes never rendered because first-level `xdg_popup` surfaces were
-dropped before they reached the scene graph.
-
-### Fixed
-
-- **Context menus and overlay popups did not render.** A popup parented
-  directly to a toplevel — the shape of every context menu — was skipped
-  instead of being given a scene tree. Popups are now constrained to the
-  output's *logical* box and re-constrained on every commit, so menus opened
-  near a screen edge are flipped back on-screen instead of running off it.
-- **Focused-window border was offset on client-side-decorated windows.**
-  wlroots places an xdg scene node so its origin already *is* the window
-  geometry origin; uwm was adding `geo.x/geo.y` on top, double-counting the
-  frame. Visible on any browser using its own title bar rather than the
-  system one.
-- **Monocle cycled windows whenever a transient dialog closed.** A file
-  picker or upload box returning focus picked the head of the workspace list
-  instead of the window that was actually visible. Monocle also no longer
-  collapses when a workspace is down to one tiled window.
-- **`ulaunch` aborted on any entry list over 512 items.** The filter wrote an
-  unbounded count into a fixed stack array, so `Super+e` (2506 commands) and
-  `Super+Alt+f` (tens of thousands of files) died with a stack-smash while
-  `Super+r` (49 desktop entries) kept working.
-- **`Super+Alt+f` never opened the file.** It ran `cd "$HOME/$f"` on a *file*,
-  which fails with `ENOTDIR`, so the `&&` short-circuited and nvim never
-  launched. It also listed all of `$HOME` with `fd --hidden`, a scan that does
-  not finish on a real home directory; it now uses `rg --files` and reuses
-  the running terminal via `footclient`.
-- **`Super+e` ran commands with no arguments.** `RUN` piped the selection into
-  `xargs -r`, which performs no shell expansion; it now pipes into `sh -s`, so
-  tilde, quoting, pipes and globs all work.
-- **A crash could freeze the whole desktop.** The crash handler retried
-  `siglongjmp` once with the handler still armed, so a deterministic fault
-  looped forever at 100% CPU with no input or repaints. Recovery is now
-  bounded and falls back to re-exec.
-- **A startup-time null pointer.** The global server pointer was only assigned
-  on the first key press, so anything reached before that saw `NULL`.
-- Scroll wheel no longer changes volume (it reached the bar and forked a
-  `wpctl` per wheel tick); use the volume keys or click the bar to mute.
-
-### Added
-
-- Layer-shell popup support, so menus parented to a bar or notification
-  surface work.
-- `make install` now installs `uwm`, `ubar` and `ulaunch` together.
-- `UWM_NO_CRASH_HANDLER=1` keeps the default fault handlers so sanitizers and
-  `gdb` report real faults.
-- `ulaunch` filters incrementally and ingests stdin in 64 KB chunks: a
-  36,000-entry list now settles in ~9 re-filters (~130 ms) instead of ~440.
-
-### Performance
-
-Border updates skip redundant work — they no longer re-raise (and thereby
-damage the whole tiled layer) when nothing changed, and duplicate per-commit
-updates were removed. Window size configures are compared against the last
-*requested* size rather than the client's reported geometry, which on a
-client-side-decorated window differs by the frame and previously caused a
-configure on every arrange. Fullscreen windows are sized and positioned in
-logical layout coordinates instead of physical pixels.
-
-### Tests
-
-The suite is now tracked and passes 11/11. All eight files failed beforehand:
-six referenced paths from before the source tree was split into
-`src/{core,input,output,shell,ui,wm}`, and two asserted behaviour that never
-existed.
-
-## Release 1.0.0
-
-UWM 1.0.0 is the first stable release after 0.9.1. It includes focused-window borders, improved floating-window behavior, monocle-mode improvements, multi-output fixes, UBar updates, performance and resource-management work, and Xwayland support.
-
-Xwayland is opt-in:
-
-```sh
-uwm       # Pure Wayland session
-uwm -x    # Enable Xwayland for X11 applications
-uwm -X    # Explicitly disable Xwayland
-```
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Philosophy
 
@@ -189,6 +108,18 @@ Coming soon.
 git clone <repository-url>
 cd uwm
 make
+sudo make install
+```
+
+`make install` installs `uwm`, `ubar` and `ulaunch` into `$PREFIX/bin`
+(default `/usr`).
+
+Xwayland is opt-in, so a default session is pure Wayland:
+
+```sh
+uwm       # Pure Wayland session
+uwm -x    # Enable Xwayland for X11 applications
+uwm -X    # Explicitly disable Xwayland
 ```
 
 ### ASAN Build
