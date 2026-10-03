@@ -135,6 +135,38 @@ void toplevel_set_activated(struct uwm_toplevel *t, bool activated);
 void toplevel_set_fullscreen(struct uwm_toplevel *t, bool fs);
 const char *toplevel_app_id(struct uwm_toplevel *t);
 const char *toplevel_title(struct uwm_toplevel *t);
+
+/* True for an X11 override-redirect window (menu, tooltip, combobox popup,
+ * Chromium popup dialog). Such windows are pointer-only: the X client owns
+ * their stacking and their keyboard grab, and it has already called
+ * XSetInputFocus() itself if it wants keys.
+ *
+ * They must NOT receive the seat's keyboard focus. Doing so makes Xwayland
+ * call XSetInputFocus() on them, which delivers FocusOut to the parent
+ * window; Chromium/Electron then close the menu the moment the pointer
+ * lands on it, so the menu can never be clicked. Key routing is unaffected
+ * either way — Xwayland forwards key events to the X server, which routes
+ * them according to the X focus the client set. Sway behaves the same way.
+ *
+ * They also must not get an active-window border, since they are not
+ * workspace members in any meaningful sense. */
+bool toplevel_is_override_redirect(struct uwm_toplevel *t);
+
+/* Normalize an optional title/app_id for the foreign-toplevel protocols.
+ *
+ * xdg-shell requires title/app_id to be non-NULL strings, so
+ * wlr_xdg_toplevel->title/->app_id are always set. X11 has no such rule:
+ * WM_NAME and WM_CLASS are ordinary optional properties, so a client may
+ * well map a window (or an override-redirect menu) before it has ever set
+ * them, and wlroots then leaves wlr_xwayland_surface->title/->class NULL.
+ *
+ * wlr_foreign_toplevel_handle_v1_set_title/set_app_id and
+ * wlr_ext_foreign_toplevel_handle_v1_create/update_state strdup their string
+ * arguments without a NULL check, so handing them NULL is a straight
+ * strdup(NULL) segfault. Every call site must pass this instead. */
+static inline const char *uwm_title_or_empty(const char *s) {
+	return s ? s : "";
+}
 void toplevel_send_close(struct uwm_toplevel *t);
 
 void server_new_xdg_toplevel(struct wl_listener *listener, void *data);

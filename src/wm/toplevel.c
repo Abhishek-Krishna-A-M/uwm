@@ -82,10 +82,27 @@ void toplevel_set_size(struct uwm_toplevel *t, int w, int h) {
 	}
 #if WLR_HAS_XWAYLAND
 	else if (t->type == UWM_TOPLEVEL_XWAYLAND && t->xwayland_surface) {
+		/* wlr_xwayland_surface_configure() requires a mapped, managed
+		 * surface. Override-redirect windows (menus, tooltips) are
+		 * positioned by the client itself and must not be configured. */
+		if (!t->xwayland_surface->surface || !t->xwayland_surface->surface->mapped
+				|| t->xwayland_surface->override_redirect) {
+			return;
+		}
 		int x = t->floating ? t->float_x : (t->scene_tree ? t->scene_tree->node.x : t->xwayland_surface->x);
 		int y = t->floating ? t->float_y : (t->scene_tree ? t->scene_tree->node.y : t->xwayland_surface->y);
 		wlr_xwayland_surface_configure(t->xwayland_surface, x, y, w, h);
 	}
+#endif
+}
+
+bool toplevel_is_override_redirect(struct uwm_toplevel *t) {
+#if WLR_HAS_XWAYLAND
+	return t && t->type == UWM_TOPLEVEL_XWAYLAND && t->xwayland_surface
+		&& t->xwayland_surface->override_redirect;
+#else
+	(void)t;
+	return false;
 #endif
 }
 
@@ -97,7 +114,9 @@ void toplevel_set_activated(struct uwm_toplevel *t, bool activated) {
 #if WLR_HAS_XWAYLAND
 	else if (t->type == UWM_TOPLEVEL_XWAYLAND && t->xwayland_surface) {
 		wlr_xwayland_surface_activate(t->xwayland_surface, activated);
-		if (activated) {
+		if (activated && !t->xwayland_surface->override_redirect) {
+			/* restack() asserts !override_redirect; menus and other
+			 * override-redirect windows own their own stacking. */
 			wlr_xwayland_surface_restack(t->xwayland_surface, NULL, XCB_STACK_MODE_ABOVE);
 		}
 	}

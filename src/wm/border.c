@@ -77,6 +77,9 @@ void toplevel_destroy_border(struct uwm_toplevel *t) {
 static bool should_show_border(struct uwm_toplevel *t) {
 	if (!t || !t->workspace || !t->scene_tree) return false;
 	if (!t->scene_tree->node.enabled) return false;
+	/* Menus/tooltips/popup dialogs are not workspace members and must not
+	 * be framed. */
+	if (toplevel_is_override_redirect(t)) return false;
 	if (t->fullscreen) return false;
 	if (!t->workspace->output) return false;
 	if (t->workspace->output->current_workspace != t->workspace->id) return false;
@@ -95,6 +98,12 @@ static bool should_show_border(struct uwm_toplevel *t) {
 
 void toplevel_update_border(struct uwm_toplevel *t) {
 	if (!t) return;
+	/* Menus/override-redirect windows never get a border, so don't even
+	 * allocate the four rects for them. */
+	if (toplevel_is_override_redirect(t)) {
+		toplevel_destroy_border(t);
+		return;
+	}
 	if (!t->border_top) {
 		toplevel_create_border(t);
 		if (!t->border_top) return;

@@ -55,7 +55,8 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 
 	if (toplevel->server->foreign_toplevel_list) {
 		struct wlr_ext_foreign_toplevel_handle_v1_state st = {
-			.title = xs->title, .app_id = xs->class,
+			.title = uwm_title_or_empty(xs->title),
+			.app_id = uwm_title_or_empty(xs->class),
 		};
 		toplevel->ext_foreign_toplevel = wlr_ext_foreign_toplevel_handle_v1_create(
 			toplevel->server->foreign_toplevel_list, &st);
@@ -65,8 +66,10 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 		toplevel->foreign_toplevel = wlr_foreign_toplevel_handle_v1_create(
 			toplevel->server->foreign_toplevel_manager);
 		if (toplevel->foreign_toplevel) {
-			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel, xs->title);
-			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, xs->class);
+			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel,
+				uwm_title_or_empty(xs->title));
+			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel,
+				uwm_title_or_empty(xs->class));
 			if (toplevel->workspace && toplevel->workspace->output)
 				wlr_foreign_toplevel_handle_v1_output_enter(toplevel->foreign_toplevel, toplevel->workspace->output->wlr_output);
 			toplevel->foreign_toplevel_request_activate.notify = handle_foreign_toplevel_request_activate;
@@ -103,10 +106,13 @@ static void xwayland_toplevel_map(struct wl_listener *listener, void *data) {
 			wl_list_remove(&toplevel->link);
 			wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 		}
-		/* unmanaged still needs focus handling for override-redirect */
+		/* Unmanaged windows are pointer-only: see
+		 * toplevel_is_override_redirect(). Giving the seat's keyboard focus
+		 * to a menu makes Xwayland XSetInputFocus() it, which sends
+		 * FocusOut to the parent and Chromium closes the menu before it can
+		 * be clicked. Only forward the seat so the X server has a keymap. */
 		if (wlr_xwayland_surface_override_redirect_wants_focus(xs)) {
 			wlr_xwayland_set_seat(toplevel->server->xwayland, toplevel->server->seat);
-			focus_toplevel(toplevel);
 		}
 		workspace_update_borders(toplevel->workspace);
 		return;
@@ -211,12 +217,17 @@ static void xwayland_toplevel_commit(struct wl_listener *listener, void *data) {
 		free(toplevel->last_title); toplevel->last_title = cur_title ? strdup(cur_title) : NULL;
 		free(toplevel->last_app_id); toplevel->last_app_id = cur_app ? strdup(cur_app) : NULL;
 		if (toplevel->ext_foreign_toplevel) {
-			struct wlr_ext_foreign_toplevel_handle_v1_state st = { .title = cur_title, .app_id = cur_app };
+			struct wlr_ext_foreign_toplevel_handle_v1_state st = {
+				.title = uwm_title_or_empty(cur_title),
+				.app_id = uwm_title_or_empty(cur_app),
+			};
 			wlr_ext_foreign_toplevel_handle_v1_update_state(toplevel->ext_foreign_toplevel, &st);
 		}
 		if (toplevel->foreign_toplevel) {
-			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel, cur_title);
-			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, cur_app);
+			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel,
+				uwm_title_or_empty(cur_title));
+			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel,
+				uwm_title_or_empty(cur_app));
 		}
 	}
 	toplevel_update_border(toplevel);
@@ -250,6 +261,10 @@ static void xwayland_toplevel_destroy(struct wl_listener *listener, void *data) 
 	if (ws->fullscreen_window == toplevel) ws->fullscreen_window = NULL;
 	wl_list_remove(&toplevel->link); wl_list_init(&toplevel->link);
 	wl_list_remove(&toplevel->workspace_link); wl_list_init(&toplevel->workspace_link);
+	/* unmap keeps the window in workspace->floating_windows so a re-map can
+	 * restore it; destroy must not, or the list is left pointing at freed
+	 * memory. */
+	wl_list_remove(&toplevel->floating_link); wl_list_init(&toplevel->floating_link);
 	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
 		struct uwm_bsp_node *leaf = bsp_find_leaf(ws->root, toplevel);
 		if (leaf) { bsp_remove(ws, toplevel); int x,y,w,h; get_output_size(ws,&x,&y,&w,&h); bsp_arrange(ws,x,y,w,h,toplevel->server->config.inner_gap); }
@@ -266,8 +281,16 @@ static void xwayland_handle_request_activate(struct wl_listener *listener, void 
 	struct wlr_xwayland_surface *xs = toplevel->xwayland_surface;
 	if (!xs || !xs->surface || !xs->surface->mapped) return;
 	workspace_switch(toplevel->server, toplevel->workspace->id);
-	focus_toplevel(toplevel);
-	wlr_xwayland_surface_restack(xs, NULL, XCB_STACK_MODE_ABOVE);
+	/* Menus/override-redirect windows are pointer-only; see
+	 * toplevel_is_override_redirect(). */
+	if (!toplevel_is_override_redirect(toplevel))
+		focus_toplevel(toplevel);
+	/* wlr_xwayland_surface_restack() asserts !override_redirect. Override-redirect
+	 * windows (menus, tooltips, Chromium popup dialogs) manage their own
+	 * stacking and XSetInputFocus on them emits request_activate, so skipping
+	 * the restack here is mandatory, not an optimisation. */
+	if (!xs->override_redirect)
+		wlr_xwayland_surface_restack(xs, NULL, XCB_STACK_MODE_ABOVE);
 }
 static void xwayland_handle_request_configure(struct wl_listener *listener, void *data) {
 	struct uwm_toplevel *toplevel = wl_container_of(listener, toplevel, xwayland_configure);
@@ -393,6 +416,13 @@ static void xwayland_handle_override_redirect(struct wl_listener *listener, void
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+	/* Unmap deliberately leaves the window in workspace->floating_windows so a
+	 * re-map restores it, but this toplevel is about to be freed. Leaving the
+	 * link in would leave ws->floating_windows pointing into freed memory, and
+	 * every wl_list_for_each over that list would then walk freed memory. */
+	wl_list_remove(&toplevel->floating_link);
+	wl_list_init(&toplevel->floating_link);
+	toplevel_destroy_border(toplevel);
 	if (toplevel->scene_tree)
 		wlr_scene_node_destroy(&toplevel->scene_tree->node);
 	xs->data = NULL;
@@ -413,6 +443,7 @@ void server_new_xwayland_surface(struct wl_listener *listener, void *data) {
 	toplevel->xwayland_surface = xs;
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
 	wl_list_init(&toplevel->link); wl_list_init(&toplevel->workspace_link);
+	wl_list_init(&toplevel->floating_link);
 	wl_list_init(&toplevel->map.link); wl_list_init(&toplevel->unmap.link); wl_list_init(&toplevel->commit.link);
 	xs->data = toplevel;
 	/* scene tree: unmanaged goes to floating_layer at xs->x/y, managed to tiled_layer */
