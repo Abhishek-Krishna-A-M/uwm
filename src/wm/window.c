@@ -276,13 +276,14 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 	if (toplevel->server->foreign_toplevel_list) {
 		struct wlr_ext_foreign_toplevel_handle_v1_state state = {
-			.title = toplevel->xdg_toplevel->title,
-			.app_id = toplevel->xdg_toplevel->app_id,
+			.title = uwm_title_or_empty(toplevel->xdg_toplevel->title),
+			.app_id = uwm_title_or_empty(toplevel->xdg_toplevel->app_id),
 		};
 		toplevel->ext_foreign_toplevel =
 			wlr_ext_foreign_toplevel_handle_v1_create(
 				toplevel->server->foreign_toplevel_list, &state);
-		toplevel->ext_foreign_toplevel->data = toplevel;
+		if (toplevel->ext_foreign_toplevel)
+			toplevel->ext_foreign_toplevel->data = toplevel;
 	}
 
 	if (toplevel->server->foreign_toplevel_manager) {
@@ -290,9 +291,11 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 			wlr_foreign_toplevel_handle_v1_create(
 				toplevel->server->foreign_toplevel_manager);
 		wlr_foreign_toplevel_handle_v1_set_title(
-			toplevel->foreign_toplevel, toplevel->xdg_toplevel->title);
+			toplevel->foreign_toplevel,
+			uwm_title_or_empty(toplevel->xdg_toplevel->title));
 		wlr_foreign_toplevel_handle_v1_set_app_id(
-			toplevel->foreign_toplevel, toplevel->xdg_toplevel->app_id);
+			toplevel->foreign_toplevel,
+			uwm_title_or_empty(toplevel->xdg_toplevel->app_id));
 		if (toplevel->workspace && toplevel->workspace->output) {
 			wlr_foreign_toplevel_handle_v1_output_enter(
 				toplevel->foreign_toplevel,
@@ -541,8 +544,10 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 			wlr_ext_foreign_toplevel_handle_v1_update_state(toplevel->ext_foreign_toplevel, &state);
 		}
 		if (toplevel->foreign_toplevel) {
-			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel, cur_title);
-			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel, cur_app);
+			wlr_foreign_toplevel_handle_v1_set_title(toplevel->foreign_toplevel,
+				uwm_title_or_empty(cur_title));
+			wlr_foreign_toplevel_handle_v1_set_app_id(toplevel->foreign_toplevel,
+				uwm_title_or_empty(cur_app));
 		}
 	}
 	toplevel_update_border(toplevel);
@@ -599,6 +604,11 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_init(&toplevel->link);
 	wl_list_remove(&toplevel->workspace_link);
 	wl_list_init(&toplevel->workspace_link);
+	/* unmap keeps the window in workspace->floating_windows so a re-map can
+	 * restore it; destroy must not, or the list is left pointing at freed
+	 * memory. */
+	wl_list_remove(&toplevel->floating_link);
+	wl_list_init(&toplevel->floating_link);
 
 	/* If unmap was not called (e.g. force-close), clean up BSP tree */
 	if (ws->root && !toplevel->floating && !toplevel->fullscreen) {
@@ -689,6 +699,10 @@ void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->workspace = &server->workspaces.workspaces[server->workspaces.current];
 	wl_list_init(&toplevel->link);
 	wl_list_init(&toplevel->workspace_link);
+	/* Must be a valid self-linked list even while the window is tiled:
+	 * toggle_floating() calls wl_list_remove() on it before the first
+	 * insert, and wl_list_remove() dereferences next/prev unconditionally. */
+	wl_list_init(&toplevel->floating_link);
 	toplevel->scene_tree = wlr_scene_xdg_surface_create(toplevel->server->tiled_layer, xdg_toplevel->base);
 	if (!toplevel->scene_tree) {
 		free(toplevel);

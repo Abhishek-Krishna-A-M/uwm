@@ -125,7 +125,8 @@ static void process_cursor_motion(struct uwm_server *server, uint32_t time) {
 		if (toplevel) {
 			struct uwm_workspace *ws = toplevel->workspace;
 			if (ws == &server->workspaces.workspaces[server->workspaces.current]
-					&& ws->focus_follows_pointer) {
+					&& ws->focus_follows_pointer
+					&& !toplevel_is_override_redirect(toplevel)) {
 				focus_toplevel(toplevel);
 			}
 		}
@@ -196,7 +197,8 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 		struct uwm_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 
-		if ((modifiers & WLR_MODIFIER_LOGO) && toplevel) {
+		if ((modifiers & WLR_MODIFIER_LOGO) && toplevel
+				&& !toplevel_is_override_redirect(toplevel)) {
 			focus_toplevel(toplevel);
 			if (event->button == BTN_LEFT) {
 				begin_interactive(toplevel, UWM_CURSOR_MOVE, 0);
@@ -214,7 +216,7 @@ void server_cursor_button(struct wl_listener *listener, void *data) {
 			server->seat, event->time_msec, event->button, event->state);
 		wlr_seat_pointer_notify_frame(server->seat);
 
-		if (toplevel)
+		if (toplevel && !toplevel_is_override_redirect(toplevel))
 			focus_toplevel(toplevel);
 	} else {
 		wlr_seat_pointer_notify_button(server->seat,
