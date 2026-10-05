@@ -172,15 +172,6 @@ struct zwp_uwm_workspace_group_v1_listener {
 			  uint32_t active,
 			  uint32_t occupied);
 	/**
-	 * focused window title
-	 *
-	 * The title of the currently focused window on the output
-	 * associated with this workspace group.
-	 */
-	void (*focused_title)(void *data,
-			      struct zwp_uwm_workspace_group_v1 *zwp_uwm_workspace_group_v1,
-			      const char *title);
-	/**
 	 * batch complete
 	 *
 	 * Marks the end of a batch of workspace and title updates. The
@@ -208,10 +199,6 @@ zwp_uwm_workspace_group_v1_add_listener(struct zwp_uwm_workspace_group_v1 *zwp_u
  * @ingroup iface_zwp_uwm_workspace_group_v1
  */
 #define ZWP_UWM_WORKSPACE_GROUP_V1_WORKSPACE_SINCE_VERSION 1
-/**
- * @ingroup iface_zwp_uwm_workspace_group_v1
- */
-#define ZWP_UWM_WORKSPACE_GROUP_V1_FOCUSED_TITLE_SINCE_VERSION 1
 /**
  * @ingroup iface_zwp_uwm_workspace_group_v1
  */

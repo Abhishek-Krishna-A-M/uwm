@@ -68,20 +68,6 @@ static void bar_manager_handle_get_workspace_group(struct wl_client *client,
 
 	/* Send initial state */
 	uwm_bar_send_workspace_state(group);
-
-	/* Find focused window title */
-	struct uwm_output *title_out = output
-		? output : manager->server->active_output;
-	const char *title = "";
-	if (title_out) {
-		struct uwm_workspace *ws = &manager->server->workspaces
-			.workspaces[title_out->current_workspace];
-		const char *focused_title = ws && ws->focused
-			? toplevel_title(ws->focused) : NULL;
-		if (focused_title)
-			title = focused_title;
-	}
-	uwm_bar_send_focused_title(group, title);
 	zwp_uwm_workspace_group_v1_send_done(group->resource);
 }
 
@@ -200,15 +186,6 @@ void uwm_bar_send_workspace_state(struct uwm_workspace_group *group)
 	}
 }
 
-void uwm_bar_send_focused_title(struct uwm_workspace_group *group,
-		const char *title)
-{
-	if (!group || !group->resource)
-		return;
-	zwp_uwm_workspace_group_v1_send_focused_title(
-		group->resource, title ? title : "");
-}
-
 void uwm_bar_send_all(struct uwm_server *server)
 {
 	if (!server || !server->bar_manager)
@@ -217,24 +194,6 @@ void uwm_bar_send_all(struct uwm_server *server)
 	struct uwm_workspace_group *group;
 	wl_list_for_each(group, &server->bar_manager->groups, link) {
 		uwm_bar_send_workspace_state(group);
-
-		const char *title = "";
-		if (group->output) {
-			struct uwm_workspace *ws = &server->workspaces
-				.workspaces[group->output->current_workspace];
-			const char *focused_title = ws && ws->focused
-				? toplevel_title(ws->focused) : NULL;
-			if (focused_title)
-				title = focused_title;
-		} else if (server->active_output) {
-			struct uwm_workspace *ws = &server->workspaces
-				.workspaces[server->active_output->current_workspace];
-			const char *focused_title = ws && ws->focused
-				? toplevel_title(ws->focused) : NULL;
-			if (focused_title)
-				title = focused_title;
-		}
-		uwm_bar_send_focused_title(group, title);
 		zwp_uwm_workspace_group_v1_send_done(group->resource);
 	}
 }

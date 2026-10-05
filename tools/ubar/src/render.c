@@ -214,21 +214,6 @@ void render_frame(State *state) {
 		/* separator: original adds 4 + line + 10 =14 */
 		left_w += 14;
 	}
-	/* title – must mirror drawing logic with ellipsize 280 (~28 chars) */
-	int title_tw = 0;
-	if (state->focused_title[0]) {
-		pango_layout_set_text(layout, state->focused_title, -1);
-		pango_layout_set_width(layout, 280 * PANGO_SCALE);
-		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
-		int tw, th;
-		pango_layout_get_pixel_size(layout, &tw, &th);
-		title_tw = tw;
-		pango_layout_set_width(layout, -1);
-		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
-	} else {
-		text_extents(layout, "Desktop", &title_tw, NULL);
-	}
-	left_w += title_tw;
 
 	int center_w = 0;
 	if (state->time_str[0]) {
@@ -312,28 +297,6 @@ void render_frame(State *state) {
 		cairo_line_to(cr, lx, h - 6);
 		cairo_stroke(cr);
 		lx += 10;
-	}
-
-	if (state->focused_title[0]) {
-		pango_layout_set_text(layout, state->focused_title, -1);
-		pango_layout_set_width(layout, 280 * PANGO_SCALE);
-		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
-
-		int tw, th;
-		pango_layout_get_pixel_size(layout, &tw, &th);
-
-		cairo_set_source_hex(cr, state->fg_color);
-		cairo_move_to(cr, lx, (h - th) / 2.0);
-		pango_cairo_show_layout(cr, layout);
-
-		pango_layout_set_width(layout, -1);
-		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
-		lx += tw;
-	} else {
-		int tw;
-		text_extents(layout, "Desktop", &tw, NULL);
-		draw_text(layout, cr, lx, h, "Desktop", state->ws_inactive_text);
-		lx += tw;
 	}
 
 	/* ---- Draw center time (fixed-center) ---- */

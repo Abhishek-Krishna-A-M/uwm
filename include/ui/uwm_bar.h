@@ -24,8 +24,6 @@ struct uwm_bar_manager {
 bool uwm_bar_manager_create(struct uwm_server *server);
 void uwm_bar_manager_destroy(struct uwm_server *server);
 void uwm_bar_send_workspace_state(struct uwm_workspace_group *group);
-void uwm_bar_send_focused_title(struct uwm_workspace_group *group,
-	const char *title);
 void uwm_bar_send_all(struct uwm_server *server);
 void uwm_bar_send_output(struct uwm_output *output);
 void uwm_bar_notify_focus(struct uwm_server *server,

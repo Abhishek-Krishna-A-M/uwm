@@ -143,16 +143,6 @@ static void ws_workspace(void *data,
 	s->workspaces[id].occupied = new_occupied;
 }
 
-static void ws_focused_title(void *data,
-		struct zwp_uwm_workspace_group_v1 *group,
-		const char *title) {
-	State *s = (State *)data;
-	if (strcmp(s->focused_title, title) != 0) {
-		snprintf(s->focused_title, sizeof(s->focused_title), "%s", title);
-		s->need_redraw = true;
-	}
-}
-
 static void ws_done(void *data,
 		struct zwp_uwm_workspace_group_v1 *group) {
 	State *s = (State *)data;
@@ -166,7 +156,6 @@ static void ws_done(void *data,
 
 static const struct zwp_uwm_workspace_group_v1_listener workspace_group_listener = {
 	.workspace = ws_workspace,
-	.focused_title = ws_focused_title,
 	.done = ws_done,
 };
 

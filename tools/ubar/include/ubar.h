@@ -13,7 +13,7 @@
 #define MAX_ZONES 32
 #define MAX_TITLE 256
 #define MAX_STR 64
-#define BAR_HEIGHT 30
+#define BAR_HEIGHT 28
 
 #define WARNING_COLOR   0xffc46464
 
@@ -79,7 +79,6 @@ typedef struct {
 	int ws_count;
 	bool ws_batch_pending;
 	Workspace workspaces[MAX_WORKSPACES];
-	char focused_title[MAX_TITLE];
 
 	char time_str[MAX_STR];
 	bool time_detailed;

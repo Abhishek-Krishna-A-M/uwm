@@ -71,14 +71,6 @@
       <arg name="occupied" type="uint"/>
     </event>
 
-    <event name="focused_title">
-      <description summary="focused window title">
-        The title of the currently focused window on the output
-        associated with this workspace group.
-      </description>
-      <arg name="title" type="string"/>
-    </event>
-
     <event name="done">
       <description summary="batch complete">
         Marks the end of a batch of workspace and title updates.

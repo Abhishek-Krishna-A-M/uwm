@@ -69,13 +69,12 @@ static const struct wl_message zwp_uwm_workspace_group_v1_requests[] = {
 
 static const struct wl_message zwp_uwm_workspace_group_v1_events[] = {
 	{ "workspace", "uuu", uwm_bar_unstable_v1_types + 0 },
-	{ "focused_title", "s", uwm_bar_unstable_v1_types + 0 },
 	{ "done", "", uwm_bar_unstable_v1_types + 0 },
 };
 
 WL_PRIVATE const struct wl_interface zwp_uwm_workspace_group_v1_interface = {
 	"zwp_uwm_workspace_group_v1", 1,
 	1, zwp_uwm_workspace_group_v1_requests,
-	3, zwp_uwm_workspace_group_v1_events,
+	2, zwp_uwm_workspace_group_v1_events,
 };
 
