@@ -73,7 +73,7 @@ static void emit(int idx) {
 				freopen("/dev/null", "r", stdin);
 				freopen("/dev/null", "w", stdout);
 				freopen("/dev/null", "w", stderr);
-				execl("/bin/sh", "sh", "-c", state.input, NULL);
+				execlp("sh", "sh", "-c", state.input, NULL);
 				_exit(127);
 			}
 		}
@@ -90,9 +90,9 @@ static void emit(int idx) {
 			setsid();
 			freopen("/dev/null", "r", stdin);
 			freopen("/dev/null", "w", stdout);
-			freopen("/dev/null", "w", stderr);
-			execl("/bin/sh", "sh", "-c", state.exec_cmds[entry_idx], NULL);
-			_exit(127);
+				freopen("/dev/null", "w", stderr);
+				execlp("sh", "sh", "-c", state.exec_cmds[entry_idx], NULL);
+				_exit(127);
 		}
 		state.running = false;
 	} else {

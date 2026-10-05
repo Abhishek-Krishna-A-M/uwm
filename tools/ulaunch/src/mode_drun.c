@@ -120,7 +120,11 @@ int mode_drun(void) {
 	if (!state.entries || !state.exec_cmds) return 1;
 
 	const char *data_dirs = getenv("XDG_DATA_DIRS");
-	if (!data_dirs) data_dirs = "/usr/local/share:/usr/share";
+	/* XDG_DATA_DIRS is normally set on both FHS distros and NixOS, but a
+	 * compositor started from a bare display manager may not see it. Fall
+	 * back to every system location either OS family uses; missing
+	 * directories are simply skipped by scan_dir. */
+	if (!data_dirs) data_dirs = "/run/current-system/sw/share:/usr/local/share:/usr/share";
 
 	char dirs_buf[4096];
 	strncpy(dirs_buf, data_dirs, sizeof(dirs_buf) - 1);

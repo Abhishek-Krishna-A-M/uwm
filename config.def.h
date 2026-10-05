@@ -25,7 +25,7 @@
 #define KEY_REPEAT_RATE 55
 #define TAP_TO_CLICK true
 #define NATURAL_SCROLL true
-#define ACCEL_PROFILE 0.75
+#define ACCEL_PROFILE 1
 #define POINTER_SPEED 0.2
 
 /* XKB options — set to "caps:escape" to map Caps Lock to Escape */
@@ -67,7 +67,7 @@
 #define VOLMUTE     "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", NULL
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
-#define REFRESH_BAR "sh", "-c", "killall -9 ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
+#define REFRESH_BAR "sh", "-c", "pkill -x ubar 2>/dev/null; sleep 0.2; setsid ubar >/dev/null 2>&1 &", NULL
 #define UBROWSER    "ubrowser", NULL
 #define RUN_ACTIONS "sh", "-c", "~/.config/custom_scripts/run_actions.sh", NULL
 
@@ -179,12 +179,14 @@
 /* startup — NULL-terminated list of shell commands.
  * Each entry is executed via sh -c after WAYLAND_DISPLAY is set.
  * PipeWire is started here because runit has no user service manager.
- * Portals are started here for the same reason. */
+ * Portals are started here for the same reason.
+ * The portal probe tries PATH first (NixOS store binaries) and then the
+ * FHS libexec locations (Arch/Debian/...), so the same default works on both. */
 #define AUTOSTART \
 	"foot --server", \
 	"ubar", \
-	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
-	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
+	"swaybg -i ~/Pictures/nixos-wallpaper.png -m fill", \
+	"xdg-desktop-portal -r 2>/dev/null || /usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
 	"runsvdir ~/.local/share/runit/service", \
 	NULL
 

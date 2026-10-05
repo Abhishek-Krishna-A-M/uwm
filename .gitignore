@@ -112,8 +112,15 @@ config.h
 build/uwm
 /tools/ulaunch/ulaunch
 /tools/ubar/ubar
-backup/core.*
-backup/core
+
+# Binary snapshots and crash dumps — local only, never push
+backup/
+
+# Reference checkouts (nested repos) — never push
+docs/bspwm/
+docs/polybar/
+docs/rofi/
+docs/sway/
 
 
 # python bytecode cache from tests/

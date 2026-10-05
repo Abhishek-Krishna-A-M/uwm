@@ -2,7 +2,49 @@
 
 All notable changes to UWM are recorded here. The project uses
 [semantic versioning](https://semver.org/); release tags are prefixed `v`
-(`v1.1.0`, `v1.0.0`, …).
+(`v1.2.0`, `v1.1.0`, `v1.0.0`, …).
+
+## 1.2.0
+
+NixOS compatibility release. The build now works identically on NixOS and on
+traditional FHS distributions, with `-march=native` kept as the default for
+local builds.
+
+### Fixed
+
+- **`ubar` / `ulaunch` did not build on NixOS.** Both Makefiles hardcoded
+  `/usr/share/wayland-protocols/.../xdg-shell.xml`, which does not exist
+  outside FHS distros. The protocol directory is now resolved through
+  `pkg-config --variable=pkgdatadir wayland-protocols` (overridable via
+  `WAYLAND_PROTOCOLS=` / `XDG_SHELL_XML=`), so the flake no longer patches
+  the Makefiles.
+- **Parallel builds raced during protocol generation.** The paired
+  header/source rules could run `wayland-scanner` twice concurrently under
+  `make -j`, and a from-clean parallel build failed outright because the
+  generated files had no rule. Generation now goes through a single stamp
+  target with explicit file rules.
+- **`ulaunch` had no `PREFIX` default.** A bare `make install` installed to
+  `/bin/ulaunch`; it now defaults to `/usr` like the other Makefiles and
+  installs with `install -m 755`.
+- **Nix builds discarded the toolchain flags.** The root Makefile assigned
+  `CFLAGS`/`LDFLAGS` with `=`, wiping out the environment (including Nix's
+  flags). It now uses `?=`/`+=` with `NATIVE=` (default `1`, flake passes
+  `0` for portable store binaries) and `WERROR=` (default `1`, flake passes
+  `0` so FORTIFY 3 diagnostics don't trip `-Werror`) knobs. `config.h` is
+  only bootstrapped when missing, never clobbered.
+- **Nix store sources are filtered.** The derivations build from a fileset
+  containing only what compilation reads, so host `build/` outputs, `docs/`
+  and the companion tools can neither leak objects into nor needlessly
+  rebuild the compositor. The NixOS module now also registers the Wayland
+  session via `services.displayManager.sessionPackages`, and `aarch64-linux`
+  is a supported system.
+- **`ulaunch` hardcoded `/bin/sh`.** Spawning now uses `execlp("sh", …)`
+  (PATH lookup), and the `drun` fallback data dirs include
+  `/run/current-system/sw/share` for sessions without `XDG_DATA_DIRS`.
+- **Portal autostart probed FHS paths only.** It now tries
+  `xdg-desktop-portal` from `PATH` first (NixOS store) before the
+  `/usr/lib` / `/usr/libexec` locations.
+- **Default wallpaper is now `~/Pictures/nixos-wallpaper.png`.
 
 ## 1.1.0
 

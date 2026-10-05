@@ -611,14 +611,15 @@ bool data_sync_network(State *state) {
 			snprintf(state->net_speed, sizeof(state->net_speed), "%s", state->net_name);
 		}
 	} else {
-		/* Get WiFi name via nmcli (only on change, cached) */
+		/* Get WiFi name - try nmcli first, then iwd/iwctl */
 		static char cached_iface[256] = {0};
 		static char cached_name[256] = {0};
 		if (strcmp(cached_iface, active_iface) != 0) {
 			snprintf(cached_iface, sizeof(cached_iface), "%s", active_iface);
 			cached_name[0] = 0;
 			if (is_wifi) {
-				char cmd[128];
+				/* Try nmcli first (NetworkManager) */
+				char cmd[256];
 				snprintf(cmd, sizeof(cmd), "nmcli -t -f GENERAL.CONNECTION device show %s 2>/dev/null", active_iface);
 				FILE *nm = popen(cmd, "r");
 				if (nm) {
@@ -636,6 +637,43 @@ bool data_sync_network(State *state) {
 						}
 					}
 					pclose(nm);
+				}
+				
+				/* Fallback to iwd/iwctl if nmcli didn't work */
+				if (!cached_name[0]) {
+					FILE *iw = popen("iwctl station list 2>/dev/null", "r");
+					if (iw) {
+						char line[256];
+						while (fgets(line, sizeof(line), iw)) {
+							if (strstr(line, active_iface) && strstr(line, "connected")) {
+								/* Try to get the connected network name */
+								FILE *iw2 = popen("iwctl station get-networks 2>/dev/null | awk -F'  +' '$2 == \"connected\" {print $1}'", "r");
+								if (iw2) {
+									if (fgets(cached_name, sizeof(cached_name), iw2)) {
+										char *nl = strchr(cached_name, '\n');
+										if (nl) *nl = '\0';
+									}
+									pclose(iw2);
+								}
+								break;
+							}
+						}
+						pclose(iw);
+					}
+				}
+				
+				/* Fallback to iwctl station show */
+				if (!cached_name[0]) {
+					char cmd2[256];
+					snprintf(cmd2, sizeof(cmd2), "iwctl station %s show 2>/dev/null | grep 'Connected network' | sed 's/.*Connected network *//'", active_iface);
+					FILE *iw3 = popen(cmd2, "r");
+					if (iw3) {
+						if (fgets(cached_name, sizeof(cached_name), iw3)) {
+							char *nl = strchr(cached_name, '\n');
+							if (nl) *nl = '\0';
+						}
+						pclose(iw3);
+					}
 				}
 			}
 			if (!cached_name[0])

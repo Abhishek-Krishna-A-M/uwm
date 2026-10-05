@@ -5,11 +5,11 @@
 
   outputs = { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" ];
+      systems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
 
       version =
-        "1.1.0"
+        "1.2.0"
         + nixpkgs.lib.optionalString (self ? shortRev && self.shortRev != null) "+git.${self.shortRev}";
 
       # wlroots-0.20.pc references these through Requires.private. The root
@@ -49,31 +49,45 @@
         inherit program;
       };
 
-      # Shared packaging for the companion tools. Both build with plain make,
-      # hardcode the system path to xdg-shell.xml, and assemble their CFLAGS
-      # via `CFLAGS +=`, which a command-line value would discard.
+      # Store sources contain only what the build reads. Host build outputs
+      # (build/, backup/ binaries), reference docs and the companion tools
+      # must neither trigger compositor rebuilds nor leak host-built objects
+      # into a store build.
+      uwmSrc = pkgs: pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.unions [
+          ./Makefile
+          ./config.def.h
+          ./uwm.desktop
+          ./src
+          ./include
+          ./protocol
+        ];
+      };
+
+      toolSrc = pkgs: dir: files: pkgs.lib.fileset.toSource {
+        root = dir;
+        fileset = pkgs.lib.fileset.unions files;
+      };
+
+      # Shared packaging for the companion tools. The Makefiles resolve
+      # wayland-protocols through pkg-config and honour NATIVE=0, so no path
+      # patching or flag surgery is needed: plain `make` just works.
       mkTool = pkgs: { pname, src, extraBuildInputs, installPhase, description }:
         pkgs.stdenv.mkDerivation {
           inherit pname version src;
 
-          nativeBuildInputs = [ pkgs.gnumake pkgs.pkg-config pkgs.wayland pkgs.wayland-scanner ];
+          nativeBuildInputs = [ pkgs.gnumake pkgs.pkg-config pkgs.wayland-scanner ];
           buildInputs = [ pkgs.wayland pkgs.wayland-protocols pkgs.cairo pkgs.pango ] ++ extraBuildInputs;
 
-          preBuild = ''
-            substituteInPlace Makefile \
-              --replace-fail "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml" \
-              "${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
-          '';
+          enableParallelBuilding = true;
 
-          # Export CFLAGS so the Makefiles' `CFLAGS +=` lines still apply; this
-          # also drops their -march=native. `make clean` guarantees a
-          # from-scratch build even if a host-built binary leaked into the
-          # source.
+          # NATIVE=0: store binaries must run on any machine of this
+          # architecture, not just the build host. Local `make` keeps
+          # -march=native by default.
           buildPhase = ''
             runHook preBuild
-            export CFLAGS="-O3 -DNDEBUG -Wall -Wextra -pedantic"
-            make clean
-            make
+            make NATIVE=0
             runHook postBuild
           '';
 
@@ -87,27 +101,27 @@
         uwm = pkgs.stdenv.mkDerivation {
           pname = "uwm";
           inherit version;
-          src = ./.;
+          src = uwmSrc pkgs;
 
           nativeBuildInputs = [ pkgs.gnumake pkgs.pkg-config ];
           buildInputs = [ pkgs.wlroots_0_20 ] ++ wlrootsPcDeps pkgs;
 
           enableParallelBuilding = true;
 
-          # CFLAGS is passed on the command line so it replaces the Makefile's
-          # -march=native while keeping -O2 -DNDEBUG. The -Wno-error flags
-          # silence FORTIFY 3 diagnostics (format-truncation, unused-result)
-          # that would otherwise trip the Makefile's -Werror.
+          # NATIVE=0 keeps store binaries portable; WERROR=0 keeps Nix's
+          # FORTIFY=3 diagnostics from tripping the Makefile's -Werror. No
+          # CFLAGS/LDFLAGS overrides: the Makefile appends to (rather than
+          # replaces) the environment, so stdenv flags flow through untouched.
           buildPhase = ''
             runHook preBuild
-            make CC="$CC" CFLAGS="-O2 -DNDEBUG -Wno-error=format-truncation -Wno-error=unused-result" LDFLAGS="$LDFLAGS"
+            make NATIVE=0 WERROR=0
             runHook postBuild
           '';
 
           # The root Makefile has no install target; mirror the PKGBUILD layout.
           installPhase = ''
             runHook preInstall
-            install -Dm755 uwm "$out/bin/uwm"
+            install -Dm755 build/uwm "$out/bin/uwm"
             install -Dm644 uwm.desktop "$out/share/wayland-sessions/uwm.desktop"
             runHook postInstall
           '';
@@ -119,7 +133,12 @@
 
         ubar = mkTool pkgs {
           pname = "ubar";
-          src = ./tools/ubar;
+          src = toolSrc pkgs ./tools/ubar [
+            ./tools/ubar/Makefile
+            ./tools/ubar/src
+            ./tools/ubar/include
+            ./tools/ubar/protocol
+          ];
           extraBuildInputs = [ pkgs.pulseaudio pkgs.pipewire pkgs.systemdLibs ];
           description = "Status bar for the UWM Wayland compositor";
           # ubar's Makefile has no install target; install manually.
@@ -132,7 +151,12 @@
 
         ulaunch = mkTool pkgs {
           pname = "ulaunch";
-          src = ./tools/ulaunch;
+          src = toolSrc pkgs ./tools/ulaunch [
+            ./tools/ulaunch/Makefile
+            ./tools/ulaunch/src
+            ./tools/ulaunch/include
+            ./tools/ulaunch/protocol
+          ];
           extraBuildInputs = [ pkgs.libxkbcommon ];
           description = "Application launcher for the UWM Wayland compositor";
           # ulaunch's Makefile has a real install target honouring PREFIX.
@@ -159,10 +183,11 @@
         default = pkgs.mkShell {
           name = "uwm-dev-shell";
 
-          # Nix's fortified glibc (FORTIFY 3) emits -Wformat-truncation /
-          # -Wunused-result diagnostics that trip the Makefile's -Werror; the
-          # user's system glibc never sees them.
-          NIX_HARDENING_ENABLE = "all -fortify3";
+          # Nix's fortified toolchain (FORTIFY 3) emits -Wformat-truncation /
+          # -Wunused-result diagnostics that trip the Makefiles' -Werror; the
+          # system glibc on FHS distros never sees them. (`make WERROR=0`
+          # also works per-invocation.)
+          hardeningDisable = [ "fortify3" ];
 
           # All compile-time and runtime libraries of the compositor and tools.
           inputsFrom = with self.packages.${system}; [ uwm ubar ulaunch ];
@@ -203,27 +228,27 @@
             xdg-desktop-portal-wlr
           ];
 
-shellHook = ''
-  export LIBGL_DRIVERS_PATH="${pkgs.mesa.drivers}/lib/dri"
-  export GBM_BACKENDS_PATH="${pkgs.mesa.drivers}/lib/gbm"
+          shellHook = ''
+            export LIBGL_DRIVERS_PATH="${pkgs.mesa.drivers}/lib/dri"
+            export GBM_BACKENDS_PATH="${pkgs.mesa.drivers}/lib/gbm"
 
-  export XDG_DATA_DIRS="${pkgs.wayland-protocols}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
+            export XDG_DATA_DIRS="${pkgs.wayland-protocols}/share:${pkgs.shared-mime-info}/share:$XDG_DATA_DIRS"
 
-  echo
-  echo "=========================================="
-  echo " UWM Development Shell"
-  echo "=========================================="
-  echo
-  echo "Build:"
-  echo "  make"
-  echo "  make ASAN=1"
-  echo
-  echo "Debug:"
-  echo "  glxinfo -B"
-  echo "  eglinfo"
-  echo "  WAYLAND_DEBUG=1 ./uwm"
-  echo
-'';
+            echo
+            echo "=========================================="
+            echo " UWM Development Shell"
+            echo "=========================================="
+            echo
+            echo "Build:"
+            echo "  make"
+            echo "  make ASAN=1"
+            echo
+            echo "Debug:"
+            echo "  glxinfo -B"
+            echo "  eglinfo"
+            echo "  WAYLAND_DEBUG=1 ./uwm"
+            echo
+          '';
         };
       });
 
@@ -235,6 +260,11 @@ shellHook = ''
         });
 
       nixosModules.default = { pkgs, ... }: {
+        # Register the Wayland session with display managers (greetd, GDM,
+        # ...) and put the binaries on PATH.
+        services.displayManager.sessionPackages = [
+          self.packages.${pkgs.stdenv.hostPlatform.system}.uwm
+        ];
         environment.systemPackages = with self.packages.${pkgs.stdenv.hostPlatform.system}; [
           uwm
           ubar
