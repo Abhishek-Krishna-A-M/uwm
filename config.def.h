@@ -44,7 +44,7 @@
 #define SCREENSHOT    "sh", "-c", "grim -g \"$(slurp)\" - | tee ~/Pictures/Screenshots/$(date +%Y%m%d_%H%M%S).png | wl-copy", NULL
 #define SCREENSHOT_FULL "grim", NULL
 #define SCREENSHOT_CLIP "sh", "-c", "grim -g \"$(slurp)\" - | wl-copy -t image/png", NULL
-#define FILEMGR     "foot", "-e", "lf", NULL
+#define FILEMGR     "footclient", "-e", "yazi", NULL
 /* Quick file search.
  *
  * Two things were wrong before:
@@ -67,7 +67,7 @@
 #define VOLMUTE     "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", NULL
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
-#define REFRESH_BAR "sh", "-c", "pkill -x ubar 2>/dev/null; sleep 0.2; setsid ubar >/dev/null 2>&1 &", NULL
+#define REFRESH_BAR "sh", "-c", "pkill -x ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
 #define UBROWSER    "ubrowser", NULL
 #define RUN_ACTIONS "sh", "-c", "~/.config/custom_scripts/run_actions.sh", NULL
 
@@ -179,14 +179,12 @@
 /* startup — NULL-terminated list of shell commands.
  * Each entry is executed via sh -c after WAYLAND_DISPLAY is set.
  * PipeWire is started here because runit has no user service manager.
- * Portals are started here for the same reason.
- * The portal probe tries PATH first (NixOS store binaries) and then the
- * FHS libexec locations (Arch/Debian/...), so the same default works on both. */
+ * Portals are started here for the same reason. */
 #define AUTOSTART \
 	"foot --server", \
 	"ubar", \
-	"swaybg -i ~/Pictures/nixos-wallpaper.png -m fill", \
-	"xdg-desktop-portal -r 2>/dev/null || /usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
+	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
+	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
 	"runsvdir ~/.local/share/runit/service", \
 	NULL
 
