@@ -2,22 +2,28 @@
 #include "ubar.h"
 #include "data.h"
 #include "debug.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
-
+#include <fcntl.h>
 #include <pthread.h>
 #include <errno.h>
 #include <dirent.h>
 #include <poll.h>
 
+/*
+ * How long data_stop_monitors() waits for a monitor thread to finish its own
+ * teardown before detaching it. Long enough for the netlink/udev monitors,
+ * short enough that a wedged PulseAudio mainloop cannot hold ubar open.
+ */
+#define UWM_MONITOR_JOIN_NS (200 * 1000 * 1000) /* 200ms */
+
 /* PulseAudio (PipeWire-compatible) for volume monitoring */
 #include <pulse/pulseaudio.h>
-
-
 
 /* Netlink for network event monitoring */
 #include <linux/netlink.h>
@@ -34,12 +40,15 @@
 
 static uint64_t prev_cpu_idle = 0, prev_cpu_total = 0;
 static int cached_thermal_zone = -1;
+
 static pthread_mutex_t g_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool g_monitors_running = false;
 
-/* Used to block the audio monitor thread until shutdown instead of spinning
+/*
+ * Used to block the audio monitor thread until shutdown instead of spinning
  * on usleep. g_monitors_running is set false + broadcast under this mutex in
- * data_stop_monitors. */
+ * data_stop_monitors.
+ */
 static pthread_mutex_t g_run_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_run_cond = PTHREAD_COND_INITIALIZER;
 
@@ -47,11 +56,66 @@ static pthread_cond_t g_run_cond = PTHREAD_COND_INITIALIZER;
 int g_vol_pct = 0;
 bool g_muted = false;
 
-/* --- Clock (1s timer, minute-change detection) --- */
+/*
+ * Wakeup pipes for monitor threads blocked in poll(..., -1).
+ *
+ * [0] = read end
+ * [1] = write end
+ *
+ * data_stop_monitors() writes one byte to these pipes so the monitor threads
+ * wake immediately and can observe g_monitors_running == false.
+ */
+static int g_network_wake[2] = {-1, -1};
+static int g_display_wake[2] = {-1, -1};
 
-bool data_update_clock(State *state) {
+/* Track which pthreads were actually created successfully. */
+static bool g_audio_started = false;
+static bool g_network_started = false;
+static bool g_display_started = false;
+
+/*
+ * nmcli/iwctl emit column-padded, fixed-width output, so the SSID they hand
+ * back arrives wrapped in runs of spaces ("AK                    "). Pango
+ * measures those trailing spaces as real ink width, which inflated the
+ * network item to ~408px and shoved the whole right block off the right edge.
+ * Strip surrounding whitespace before anything measures the string.
+ */
+static void trim_ws(char *s)
+{
+	if (!s || !s[0])
+		return;
+
+	char *start = s;
+
+	while (*start == ' ' || *start == '\t' || *start == '\n' ||
+	       *start == '\r' || *start == '\v' || *start == '\f')
+		start++;
+
+	if (start != s)
+		memmove(s, start, strlen(start) + 1);
+
+	size_t n = strlen(s);
+
+	while (n > 0) {
+		char c = s[n - 1];
+
+		if (c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
+		    c != '\v' && c != '\f')
+			break;
+
+		s[--n] = '\0';
+	}
+}
+
+/* ================================================================
+ * Clock
+ * ================================================================ */
+
+bool data_update_clock(State *state)
+{
 	time_t t = time(NULL);
 	struct tm tm;
+
 	localtime_r(&t, &tm);
 
 	if (!state->time_detailed && tm.tm_min == state->prev_minute)
@@ -60,178 +124,308 @@ bool data_update_clock(State *state) {
 	state->prev_minute = tm.tm_min;
 
 	if (state->time_detailed)
-		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M %p", &tm);
+		strftime(state->time_str, sizeof(state->time_str),
+			 "%a %b %d, %I:%M %p", &tm);
 	else
-		strftime(state->time_str, sizeof(state->time_str), "%a %b %d, %I:%M %p", &tm);
+		strftime(state->time_str, sizeof(state->time_str),
+			 "%a %b %d, %I:%M %p", &tm);
+
 	return true;
 }
 
-/* --- CPU (delta-based, /proc/stat) --- */
+/* ================================================================
+ * CPU
+ * ================================================================ */
 
-bool data_update_cpu(State *state) {
+bool data_update_cpu(State *state)
+{
 	FILE *f = fopen("/proc/stat", "r");
-	if (!f) return false;
-	char line[256];
-	if (!fgets(line, sizeof(line), f)) { fclose(f); return false; }
-	fclose(f);
-
-	unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
-	if (sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
-		&user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal) < 4)
+	if (!f)
 		return false;
 
-	unsigned long long cur_idle = idle + iowait;
-	unsigned long long cur_total = cur_idle + user + nice + system + irq + softirq + steal;
-	unsigned long long d_total = cur_total - prev_cpu_total;
-	unsigned long long d_idle = cur_idle - prev_cpu_idle;
+	char line[256];
+
+	if (!fgets(line, sizeof(line), f)) {
+		fclose(f);
+		return false;
+	}
+
+	fclose(f);
+
+	unsigned long long user, nice, system, idle;
+	unsigned long long iowait, irq, softirq, steal;
+
+	if (sscanf(line,
+		   "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+		   &user, &nice, &system, &idle, &iowait,
+		   &irq, &softirq, &steal) < 4)
+		return false;
+
+	unsigned long long cur_idle =
+		idle + iowait;
+
+	unsigned long long cur_total =
+		cur_idle + user + nice + system +
+		irq + softirq + steal;
+
+	unsigned long long d_total =
+		cur_total - prev_cpu_total;
+
+	unsigned long long d_idle =
+		cur_idle - prev_cpu_idle;
+
 	prev_cpu_total = cur_total;
 	prev_cpu_idle = cur_idle;
 
 	int old_pct = state->cpu_pct;
+
 	if (d_total > 0)
-		state->cpu_pct = (int)((d_total - d_idle) * 100 / d_total);
+		state->cpu_pct =
+			(int)((d_total - d_idle) * 100 / d_total);
 	else
 		state->cpu_pct = 0;
+
 	return state->cpu_pct != old_pct;
 }
 
-/* --- Temperature (cached thermal zone, /sys) --- */
+/* ================================================================
+ * Temperature
+ * ================================================================ */
 
-static int read_temp_from_zone(int zone) {
+static int read_temp_from_zone(int zone)
+{
 	char path[64];
-	snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", zone);
+
+	snprintf(path, sizeof(path),
+		 "/sys/class/thermal/thermal_zone%d/temp", zone);
+
 	FILE *f = fopen(path, "r");
-	if (!f) return -1;
+	if (!f)
+		return -1;
+
 	int raw;
-	int ret = (fscanf(f, "%d", &raw) == 1 && raw / 1000 > 0) ? raw / 1000 : -1;
+
+	int ret =
+		(fscanf(f, "%d", &raw) == 1 && raw / 1000 > 0)
+			? raw / 1000
+			: -1;
+
 	fclose(f);
+
 	return ret;
 }
 
-bool data_update_temp(State *state) {
+bool data_update_temp(State *state)
+{
 	if (cached_thermal_zone >= 0) {
-		int new_temp = read_temp_from_zone(cached_thermal_zone);
+		int new_temp =
+			read_temp_from_zone(cached_thermal_zone);
+
 		if (new_temp >= 0) {
-			if (new_temp == state->temp_c) return false;
+			if (new_temp == state->temp_c)
+				return false;
+
 			state->temp_c = new_temp;
 			return true;
 		}
+
 		cached_thermal_zone = -1;
 	}
 
 	for (int i = 0; i < 6; i++) {
 		int new_temp = read_temp_from_zone(i);
+
 		if (new_temp >= 0) {
 			state->temp_c = new_temp;
 			cached_thermal_zone = i;
 			return true;
 		}
 	}
+
 	return false;
 }
 
-/* --- Memory (from /proc/meminfo MemAvailable) --- */
+/* ================================================================
+ * Memory
+ * ================================================================ */
 
-bool data_update_memory(State *state) {
+bool data_update_memory(State *state)
+{
 	FILE *f = fopen("/proc/meminfo", "r");
-	if (!f) return false;
+	if (!f)
+		return false;
 
-	unsigned long total_kb = 0, avail_kb = 0;
+	unsigned long total_kb = 0;
+	unsigned long avail_kb = 0;
 	char line[128];
+
 	while (fgets(line, sizeof(line), f)) {
-		if (sscanf(line, "MemTotal: %lu kB", &total_kb) == 1) continue;
-		if (sscanf(line, "MemAvailable: %lu kB", &avail_kb) == 1) break;
+		if (sscanf(line,
+			   "MemTotal: %lu kB",
+			   &total_kb) == 1)
+			continue;
+
+		if (sscanf(line,
+			   "MemAvailable: %lu kB",
+			   &avail_kb) == 1)
+			break;
 	}
+
 	fclose(f);
 
-	if (total_kb == 0) return false;
-	int new_pct = (int)((total_kb - avail_kb) * 100 / total_kb);
-	bool changed = (new_pct != state->ram_pct) ||
-		(total_kb != state->ram_total_kb) || (avail_kb != state->ram_avail_kb);
+	if (total_kb == 0)
+		return false;
+
+	int new_pct =
+		(int)((total_kb - avail_kb) * 100 / total_kb);
+
+	bool changed =
+		(new_pct != state->ram_pct) ||
+		(total_kb != state->ram_total_kb) ||
+		(avail_kb != state->ram_avail_kb);
+
 	state->ram_pct = new_pct;
 	state->ram_total_kb = total_kb;
 	state->ram_avail_kb = avail_kb;
+
 	return changed;
 }
 
-/* --- Battery hardware read (sysfs, used at init + D-Bus fallback) --- */
+/* ================================================================
+ * Battery
+ * ================================================================ */
 
-bool data_update_battery_hardware(State *state) {
+bool data_update_battery_hardware(State *state)
+{
 	for (int bat = 0; bat <= 1; bat++) {
 		char path[64];
-		snprintf(path, sizeof(path), "/sys/class/power_supply/BAT%d/capacity", bat);
+
+		snprintf(path, sizeof(path),
+			 "/sys/class/power_supply/BAT%d/capacity",
+			 bat);
+
 		FILE *f = fopen(path, "r");
-		if (!f) continue;
+		if (!f)
+			continue;
+
 		int new_pct = state->bat_pct;
-		if (fscanf(f, "%d", &new_pct) != 1) new_pct = 0;
+
+		if (fscanf(f, "%d", &new_pct) != 1)
+			new_pct = 0;
+
 		fclose(f);
 
 		bool new_charging = state->charging;
-		snprintf(path, sizeof(path), "/sys/class/power_supply/BAT%d/status", bat);
+
+		snprintf(path, sizeof(path),
+			 "/sys/class/power_supply/BAT%d/status",
+			 bat);
+
 		f = fopen(path, "r");
+
 		if (f) {
 			char status[16];
+
 			if (fgets(status, sizeof(status), f))
-				new_charging = (strncmp(status, "Charging", 8) == 0);
+				new_charging =
+					(strncmp(status, "Charging", 8) == 0);
+
 			fclose(f);
 		}
 
-		bool changed = (new_pct != state->bat_pct || new_charging != state->charging);
+		bool changed =
+			(new_pct != state->bat_pct) ||
+			(new_charging != state->charging);
+
 		state->bat_pct = new_pct;
 		state->charging = new_charging;
+
 		return changed;
 	}
-	bool changed = (state->bat_pct != 0 || state->charging != false);
+
+	bool changed =
+		(state->bat_pct != 0) ||
+		(state->charging != false);
+
 	state->bat_pct = 0;
 	state->charging = false;
+
 	return changed;
 }
 
-/* --- HDMI hardware read (sysfs) --- */
+/* ================================================================
+ * HDMI
+ * ================================================================ */
 
-bool data_update_hdmi_hardware(State *state) {
+bool data_update_hdmi_hardware(State *state)
+{
 	bool new_hdmi = false;
 	char path[128];
+
 	for (int i = 0; i < 8; i++) {
-		snprintf(path, sizeof(path), "/sys/class/drm/card%d-HDMI-A-%d/status", i / 4, i % 4 + 1);
+		snprintf(path, sizeof(path),
+			 "/sys/class/drm/card%d-HDMI-A-%d/status",
+			 i / 4, i % 4 + 1);
+
 		FILE *f = fopen(path, "r");
-		if (!f) continue;
+		if (!f)
+			continue;
+
 		char buf[16];
-		if (fgets(buf, sizeof(buf), f) && strncmp(buf, "connected", 9) == 0) {
+
+		if (fgets(buf, sizeof(buf), f) &&
+		    strncmp(buf, "connected", 9) == 0) {
 			new_hdmi = true;
 			fclose(f);
 			break;
 		}
+
 		fclose(f);
 	}
-	if (new_hdmi == state->hdmi) return false;
+
+	if (new_hdmi == state->hdmi)
+		return false;
+
 	state->hdmi = new_hdmi;
+
 	return true;
 }
 
-/* --- Locks hardware read (sysfs) --- */
+/* ================================================================
+ * Caps/Num locks
+ * ================================================================ */
 
-bool data_update_locks_hardware(State *state) {
+bool data_update_locks_hardware(State *state)
+{
 	bool new_caps = false;
 	bool new_num = false;
 
 	DIR *d = opendir("/sys/class/leds");
-	if (!d) return false;
+	if (!d)
+		return false;
 
 	struct dirent *ent;
+
 	while ((ent = readdir(d)) != NULL) {
-		if (ent->d_name[0] == '.') continue;
+		if (ent->d_name[0] == '.')
+			continue;
 
 		char path[512];
-		snprintf(path, sizeof(path), "/sys/class/leds/%s/brightness", ent->d_name);
+
+		snprintf(path, sizeof(path),
+			 "/sys/class/leds/%s/brightness",
+			 ent->d_name);
 
 		FILE *f = fopen(path, "r");
-		if (!f) continue;
+		if (!f)
+			continue;
 
 		char buf[8];
 		int on = 0;
+
 		if (fgets(buf, sizeof(buf), f))
 			on = (buf[0] == '1');
+
 		fclose(f);
 
 		if (strstr(ent->d_name, "::capslock"))
@@ -239,16 +433,21 @@ bool data_update_locks_hardware(State *state) {
 		else if (strstr(ent->d_name, "::numlock"))
 			new_num = on;
 	}
+
 	closedir(d);
 
-	bool changed = (new_caps != state->caps) || (new_num != state->num);
+	bool changed =
+		(new_caps != state->caps) ||
+		(new_num != state->num);
+
 	state->caps = new_caps;
 	state->num = new_num;
+
 	return changed;
 }
 
 /* ================================================================
- * PULSEAUDIO / PIPEWIRE VOLUME MONITOR (event-driven, no wpctl)
+ * PulseAudio / PipeWire volume monitor
  * ================================================================ */
 
 struct audio_monitor_state {
@@ -260,238 +459,475 @@ struct audio_monitor_state {
 
 static int audio_init_retries = 0;
 
-static void audio_sink_info_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
+static void audio_sink_info_cb(pa_context *c,
+			       const pa_sink_info *i,
+			       int eol,
+			       void *userdata)
+{
 	struct audio_monitor_state *ams = userdata;
+
 	if (eol || !i) {
-		/* PipeWire may not have sinks ready at boot — don't block PA thread.
-		 * The subscription will deliver sink info when ready. One immediate
-		 * retry without sleep is enough to handle transient empty. */
-		if (g_vol_pct == 0 && g_monitors_running && audio_init_retries < 3) {
+		/*
+		 * PipeWire may not have sinks ready at boot.
+		 * Don't block PA thread.
+		 */
+		if (g_vol_pct == 0 &&
+		    g_monitors_running &&
+		    audio_init_retries < 3) {
+
 			audio_init_retries++;
-			pa_operation *op = pa_context_get_sink_info_by_name(c,
-				ams->default_sink[0] ? ams->default_sink : NULL,
-				audio_sink_info_cb, ams);
-			if (op) pa_operation_unref(op);
+
+			pa_operation *op =
+				pa_context_get_sink_info_by_name(
+					c,
+					ams->default_sink[0]
+						? ams->default_sink
+						: NULL,
+					audio_sink_info_cb,
+					ams);
+
+			if (op)
+				pa_operation_unref(op);
 		}
+
 		return;
 	}
+
 	audio_init_retries = 0;
 
 	bool changed = false;
+
 	pthread_mutex_lock(&g_data_mutex);
-	int new_vol = (int)(pa_cvolume_avg(&i->volume) * 100.0 / PA_VOLUME_NORM + 0.5);
-	if (new_vol > 100) new_vol = 100;
-	if (new_vol < 0) new_vol = 0;
+
+	int new_vol =
+		(int)(pa_cvolume_avg(&i->volume) *
+		      100.0 / PA_VOLUME_NORM + 0.5);
+
+	if (new_vol > 100)
+		new_vol = 100;
+
+	if (new_vol < 0)
+		new_vol = 0;
+
 	bool new_muted = i->mute;
-	if (new_vol != g_vol_pct || new_muted != g_muted) {
+
+	if (new_vol != g_vol_pct ||
+	    new_muted != g_muted) {
+
 		g_vol_pct = new_vol;
 		g_muted = new_muted;
 		changed = true;
 	}
+
 	pthread_mutex_unlock(&g_data_mutex);
 
 	if (changed && g_monitors_running)
-		write(ams->app->audio_pipe[1], &((char){NOTIFY_AUDIO}), 1);
+		write(ams->app->audio_pipe[1],
+		      &((char){NOTIFY_AUDIO}), 1);
 }
 
-static void audio_subscription_cb(pa_context *c, pa_subscription_event_type_t t,
-		uint32_t idx, void *userdata) {
+static void audio_subscription_cb(
+	pa_context *c,
+	pa_subscription_event_type_t t,
+	uint32_t idx,
+	void *userdata)
+{
 	struct audio_monitor_state *ams = userdata;
-	uint32_t facility = t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
-	uint32_t type = t & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
+
+	uint32_t facility =
+		t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
+
+	uint32_t type =
+		t & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
 
 	if (facility == PA_SUBSCRIPTION_EVENT_SINK &&
 	    type == PA_SUBSCRIPTION_EVENT_CHANGE) {
-		pa_operation *op = pa_context_get_sink_info_by_index(c, idx, audio_sink_info_cb, ams);
-		if (op) pa_operation_unref(op);
+
+		pa_operation *op =
+			pa_context_get_sink_info_by_index(
+				c,
+				idx,
+				audio_sink_info_cb,
+				ams);
+
+		if (op)
+			pa_operation_unref(op);
 	}
 }
 
-static void audio_context_state_cb(pa_context *c, void *userdata) {
+static void audio_context_state_cb(
+	pa_context *c,
+	void *userdata)
+{
 	struct audio_monitor_state *ams = userdata;
-	pa_context_state_t state = pa_context_get_state(c);
+
+	pa_context_state_t state =
+		pa_context_get_state(c);
 
 	switch (state) {
 	case PA_CONTEXT_READY: {
-		pa_context_set_subscribe_callback(c, audio_subscription_cb, ams);
-		pa_operation *op = pa_context_subscribe(c,
-			PA_SUBSCRIPTION_MASK_SINK, NULL, NULL);
-		if (op) pa_operation_unref(op);
+		pa_context_set_subscribe_callback(
+			c,
+			audio_subscription_cb,
+			ams);
+
+		pa_operation *op =
+			pa_context_subscribe(
+				c,
+				PA_SUBSCRIPTION_MASK_SINK,
+				NULL,
+				NULL);
+
+		if (op)
+			pa_operation_unref(op);
 
 		/* Read initial volume */
-		op = pa_context_get_sink_info_by_name(c,
-			ams->default_sink[0] ? ams->default_sink : NULL,
-			audio_sink_info_cb, ams);
-		if (op) pa_operation_unref(op);
+		op =
+			pa_context_get_sink_info_by_name(
+				c,
+				ams->default_sink[0]
+					? ams->default_sink
+					: NULL,
+				audio_sink_info_cb,
+				ams);
+
+		if (op)
+			pa_operation_unref(op);
+
 		break;
 	}
+
 	case PA_CONTEXT_FAILED:
 	case PA_CONTEXT_TERMINATED:
 		LOG("pulseaudio context error/terminated");
 		break;
+
 	default:
 		break;
 	}
 }
 
-static void *audio_monitor_thread(void *arg) {
+static void *audio_monitor_thread(void *arg)
+{
 	State *state = arg;
-	struct audio_monitor_state *ams = calloc(1, sizeof(struct audio_monitor_state));
-	if (!ams) return NULL;
+
+	struct audio_monitor_state *ams =
+		calloc(1, sizeof(struct audio_monitor_state));
+
+	if (!ams)
+		return NULL;
+
 	ams->app = state;
 
-	ams->mainloop = pa_threaded_mainloop_new();
+	ams->mainloop =
+		pa_threaded_mainloop_new();
+
 	if (!ams->mainloop) {
 		LOG("pa_threaded_mainloop_new failed");
 		free(ams);
 		return NULL;
 	}
 
-	pa_mainloop_api *api = pa_threaded_mainloop_get_api(ams->mainloop);
-	ams->context = pa_context_new(api, "ubar");
+	pa_mainloop_api *api =
+		pa_threaded_mainloop_get_api(
+			ams->mainloop);
+
+	ams->context =
+		pa_context_new(api, "ubar");
+
 	if (!ams->context) {
-		pa_threaded_mainloop_free(ams->mainloop);
+		pa_threaded_mainloop_free(
+			ams->mainloop);
+
 		free(ams);
 		return NULL;
 	}
 
 	const char *sink_env = getenv("PULSE_SINK");
+
 	if (sink_env)
-		snprintf(ams->default_sink, sizeof(ams->default_sink), "%s", sink_env);
+		snprintf(
+			ams->default_sink,
+			sizeof(ams->default_sink),
+			"%s",
+			sink_env);
 
-	pa_context_set_state_callback(ams->context, audio_context_state_cb, ams);
+	pa_context_set_state_callback(
+		ams->context,
+		audio_context_state_cb,
+		ams);
 
-	pa_threaded_mainloop_lock(ams->mainloop);
-	pa_context_connect(ams->context, NULL, PA_CONTEXT_NOFLAGS, NULL);
-	pa_threaded_mainloop_unlock(ams->mainloop);
+	pa_threaded_mainloop_lock(
+		ams->mainloop);
 
-	pa_threaded_mainloop_start(ams->mainloop);
+	pa_context_connect(
+		ams->context,
+		NULL,
+		PA_CONTEXT_NOFLAGS,
+		NULL);
 
-	/* Block until shutdown signals us, instead of busy-waiting. */
+	pa_threaded_mainloop_unlock(
+		ams->mainloop);
+
+	pa_threaded_mainloop_start(
+		ams->mainloop);
+
+	/*
+	 * Block until shutdown signals us.
+	 */
 	pthread_mutex_lock(&g_run_mutex);
+
 	while (g_monitors_running)
-		pthread_cond_wait(&g_run_cond, &g_run_mutex);
+		pthread_cond_wait(
+			&g_run_cond,
+			&g_run_mutex);
+
 	pthread_mutex_unlock(&g_run_mutex);
 
-	pa_threaded_mainloop_lock(ams->mainloop);
-	pa_threaded_mainloop_stop(ams->mainloop);
-	pa_context_disconnect(ams->context);
-	pa_context_unref(ams->context);
-	pa_threaded_mainloop_unlock(ams->mainloop);
-	pa_threaded_mainloop_free(ams->mainloop);
+	/*
+	 * Stop the PulseAudio threaded mainloop
+	 * and clean up its context.
+	 */
+	pa_threaded_mainloop_lock(
+		ams->mainloop);
+
+	pa_threaded_mainloop_stop(
+		ams->mainloop);
+
+	pa_context_disconnect(
+		ams->context);
+
+	pa_context_unref(
+		ams->context);
+
+	pa_threaded_mainloop_unlock(
+		ams->mainloop);
+
+	pa_threaded_mainloop_free(
+		ams->mainloop);
 
 	free(ams);
+
 	return NULL;
 }
 
 /* ================================================================
- * D-BUS / UPOWER BATTERY MONITOR (event-driven)
+ * D-BUS / UPOWER BATTERY MONITOR
  * ================================================================ */
 
 /* ================================================================
- * NETLINK NETWORK MONITOR (event-driven, no polling)
+ * NETLINK NETWORK MONITOR
  * ================================================================ */
 
-static void *network_monitor_thread(void *arg) {
+static void *network_monitor_thread(void *arg)
+{
 	State *state = arg;
 
-	int sock = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	int sock =
+		socket(AF_NETLINK,
+		       SOCK_RAW | SOCK_CLOEXEC,
+		       NETLINK_ROUTE);
+
 	if (sock < 0) {
-		LOG("netlink socket failed: %s", strerror(errno));
+		LOG("netlink socket failed: %s",
+		    strerror(errno));
 		return NULL;
 	}
 
 	struct sockaddr_nl addr = {
 		.nl_family = AF_NETLINK,
-		.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR,
+		.nl_groups =
+			RTMGRP_LINK |
+			RTMGRP_IPV4_IFADDR |
+			RTMGRP_IPV6_IFADDR,
 		.nl_pid = 0,
 	};
-	if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		LOG("netlink bind failed: %s", strerror(errno));
+
+	if (bind(sock,
+		 (struct sockaddr *)&addr,
+		 sizeof(addr)) < 0) {
+
+		LOG("netlink bind failed: %s",
+		    strerror(errno));
+
 		close(sock);
 		return NULL;
 	}
 
 	/* Initial state read */
-	write(state->network_pipe[1], &((char){NOTIFY_NETWORK}), 1);
+	write(state->network_pipe[1],
+	      &((char){NOTIFY_NETWORK}), 1);
 
 	while (g_monitors_running) {
-		struct pollfd pfd = { .fd = sock, .events = POLLIN };
-		/* sleep mode: block indefinitely until netlink event or shutdown;
-		 * no 500ms wakeups — saves power when device is suspended */
-		int ret = poll(&pfd, 1, -1);
-		if (ret <= 0) {
-			if (errno == EINTR) continue;
-			if (!g_monitors_running) break;
-			continue;
+		struct pollfd pfds[2] = {
+			{
+				.fd = sock,
+				.events = POLLIN
+			},
+			{
+				.fd = g_network_wake[0],
+				.events = POLLIN
+			}
+		};
+
+		/*
+		 * Block indefinitely until either:
+		 *   1. a network event arrives, or
+		 *   2. shutdown wakes the thread.
+		 */
+		int ret = poll(pfds, 2, -1);
+
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+
+			break;
 		}
 
-		/* Drain all pending netlink messages */
-		char buf[4096];
-		ssize_t len;
-		while ((len = recv(sock, buf, sizeof(buf), MSG_DONTWAIT)) > 0) {
-			/* Any netlink event means something changed */
+		/*
+		 * Shutdown wakeup.
+		 */
+		if (pfds[1].revents &
+		    (POLLIN | POLLHUP | POLLERR)) {
+			break;
 		}
 
-		if (g_monitors_running)
-			write(state->network_pipe[1], &((char){NOTIFY_NETWORK}), 1);
+		/*
+		 * Netlink event.
+		 */
+		if (pfds[0].revents &
+		    (POLLIN | POLLERR | POLLHUP)) {
+
+			char buf[4096];
+			ssize_t len;
+
+			while ((len =
+				recv(sock,
+				     buf,
+				     sizeof(buf),
+				     MSG_DONTWAIT)) > 0) {
+				/*
+				 * Any netlink event means
+				 * something changed.
+				 */
+			}
+
+			if (g_monitors_running) {
+				write(state->network_pipe[1],
+				      &((char){NOTIFY_NETWORK}),
+				      1);
+			}
+		}
 	}
 
 	close(sock);
+
 	return NULL;
 }
 
 /* ================================================================
- * UDEV HDMI + LED MONITOR (event-driven, no polling)
+ * UDEV HDMI + LED MONITOR
  * ================================================================ */
 
-static void *display_monitor_thread(void *arg) {
+static void *display_monitor_thread(void *arg)
+{
 	State *state = arg;
 
 	struct udev *udev = udev_new();
+
 	if (!udev) {
 		LOG("udev_new failed");
 		return NULL;
 	}
 
-	struct udev_monitor *mon = udev_monitor_new_from_netlink(udev, "udev");
+	struct udev_monitor *mon =
+		udev_monitor_new_from_netlink(
+			udev,
+			"udev");
+
 	if (!mon) {
 		LOG("udev_monitor_new_from_netlink failed");
+
 		udev_unref(udev);
+
 		return NULL;
 	}
 
-	udev_monitor_filter_add_match_subsystem_devtype(mon, "drm", NULL);
-	udev_monitor_filter_add_match_subsystem_devtype(mon, "leds", NULL);
+	udev_monitor_filter_add_match_subsystem_devtype(
+		mon, "drm", NULL);
+
+	udev_monitor_filter_add_match_subsystem_devtype(
+		mon, "leds", NULL);
+
 	udev_monitor_enable_receiving(mon);
 
-	int udev_fd = udev_monitor_get_fd(mon);
+	int udev_fd =
+		udev_monitor_get_fd(mon);
 
 	/* Initial state read */
-	write(state->display_pipe[1], &((char){NOTIFY_DISPLAY}), 1);
+	write(state->display_pipe[1],
+	      &((char){NOTIFY_DISPLAY}), 1);
 
 	while (g_monitors_running) {
-		struct pollfd pfd = { .fd = udev_fd, .events = POLLIN };
-		/* sleep mode: block indefinitely — no periodic wakeups */
-		int ret = poll(&pfd, 1, -1);
-		if (ret <= 0) {
-			if (errno == EINTR) continue;
-			if (!g_monitors_running) break;
-			continue;
+		struct pollfd pfds[2] = {
+			{
+				.fd = udev_fd,
+				.events = POLLIN
+			},
+			{
+				.fd = g_display_wake[0],
+				.events = POLLIN
+			}
+		};
+
+		/*
+		 * Block indefinitely until either:
+		 *   1. a udev event arrives, or
+		 *   2. shutdown wakes the thread.
+		 */
+		int ret = poll(pfds, 2, -1);
+
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+
+			break;
 		}
 
-		/* Drain all pending udev events */
-		struct udev_device *dev;
-		while ((dev = udev_monitor_receive_device(mon)) != NULL) {
-			udev_device_unref(dev);
+		/*
+		 * Shutdown wakeup.
+		 */
+		if (pfds[1].revents &
+		    (POLLIN | POLLHUP | POLLERR)) {
+			break;
 		}
 
-		if (g_monitors_running)
-			write(state->display_pipe[1], &((char){NOTIFY_DISPLAY}), 1);
+		/*
+		 * udev event.
+		 */
+		if (pfds[0].revents &
+		    (POLLIN | POLLERR | POLLHUP)) {
+
+			struct udev_device *dev;
+
+			while ((dev =
+				udev_monitor_receive_device(mon))
+			       != NULL) {
+
+				udev_device_unref(dev);
+			}
+
+			if (g_monitors_running) {
+				write(state->display_pipe[1],
+				      &((char){NOTIFY_DISPLAY}),
+				      1);
+			}
+		}
 	}
 
 	udev_monitor_unref(mon);
 	udev_unref(udev);
+
 	return NULL;
 }
 
@@ -499,7 +935,8 @@ static void *display_monitor_thread(void *arg) {
  * MONITOR LIFECYCLE
  * ================================================================ */
 
-void data_init_fast(State *state) {
+void data_init_fast(State *state)
+{
 	data_update_clock(state);
 	data_update_cpu(state);
 	data_update_temp(state);
@@ -509,226 +946,641 @@ void data_init_fast(State *state) {
 	data_update_locks_hardware(state);
 }
 
-static pthread_t g_audio_thread, g_network_thread, g_display_thread;
+static pthread_t g_audio_thread;
+static pthread_t g_network_thread;
+static pthread_t g_display_thread;
 
-void data_start_monitors(State *state) {
-	g_monitors_running = true;
-
-	pthread_create(&g_audio_thread, NULL, audio_monitor_thread, state);
-	pthread_create(&g_network_thread, NULL, network_monitor_thread, state);
-	pthread_create(&g_display_thread, NULL, display_monitor_thread, state);
+/*
+ * Create a non-blocking wakeup pipe used by monitor threads.
+ */
+static int create_wake_pipe(int pipefd[2])
+{
+	return pipe2(
+		pipefd,
+		O_CLOEXEC | O_NONBLOCK);
 }
 
-void data_stop_monitors(void) {
+void data_start_monitors(State *state)
+{
+	g_monitors_running = true;
+
+	/*
+	 * Create wakeup pipes before creating the threads.
+	 */
+	if (create_wake_pipe(g_network_wake) < 0) {
+		LOG("failed to create network wake pipe: %s",
+		    strerror(errno));
+
+		g_monitors_running = false;
+		return;
+	}
+
+	if (create_wake_pipe(g_display_wake) < 0) {
+		LOG("failed to create display wake pipe: %s",
+		    strerror(errno));
+
+		close(g_network_wake[0]);
+		close(g_network_wake[1]);
+
+		g_network_wake[0] = -1;
+		g_network_wake[1] = -1;
+
+		g_monitors_running = false;
+		return;
+	}
+
+	/*
+	 * Start all monitor threads.
+	 */
+	if (pthread_create(&g_audio_thread,
+			   NULL,
+			   audio_monitor_thread,
+			   state) == 0) {
+
+		g_audio_started = true;
+	} else {
+		LOG("failed to create audio monitor thread");
+	}
+
+	if (pthread_create(&g_network_thread,
+			   NULL,
+			   network_monitor_thread,
+			   state) == 0) {
+
+		g_network_started = true;
+	} else {
+		LOG("failed to create network monitor thread");
+	}
+
+	if (pthread_create(&g_display_thread,
+			   NULL,
+			   display_monitor_thread,
+			   state) == 0) {
+
+		g_display_started = true;
+	} else {
+		LOG("failed to create display monitor thread");
+	}
+
+	/*
+	 * If a thread failed to start, the others still need a
+	 * clean shutdown path. Normally all three should start.
+	 */
+	if (!g_audio_started ||
+	    !g_network_started ||
+	    !g_display_started) {
+
+		LOG("one or more monitor threads failed to start");
+
+		data_stop_monitors();
+	}
+}
+
+/*
+ * Bounded join for a monitor thread.
+ *
+ * data_stop_monitors() sits on the one code path ubar must always be able to
+ * finish. Blocking here forever means ubar never exits, so it stays in
+ * session-N.scope's cgroup and every poweroff/reboot stalls until systemd gives
+ * up after TimeoutStopSec. That is not hypothetical: pa_threaded_mainloop_stop()
+ * can wedge on an internal rt-mutex and leave the audio thread waiting on the
+ * mainloop lock, which is why a bar could outlive even a clean compositor exit.
+ *
+ * So wait briefly for a tidy teardown, then detach and let process exit reclaim
+ * the thread. Nothing after this point reads monitor state.
+ */
+static void join_bounded(pthread_t tid, const char *name)
+{
+	struct timespec deadline;
+
+	clock_gettime(CLOCK_REALTIME, &deadline);
+
+	deadline.tv_nsec += UWM_MONITOR_JOIN_NS;
+	if (deadline.tv_nsec >= 1000000000L) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000L;
+	}
+
+	int rc = pthread_timedjoin_np(tid, NULL, &deadline);
+
+	if (rc == ETIMEDOUT) {
+		LOG("monitor thread '%s' did not stop in time, detaching", name);
+
+		pthread_detach(tid);
+	} else if (rc != 0) {
+		LOG("joining monitor thread '%s' failed: %s", name, strerror(rc));
+	}
+}
+
+void data_stop_monitors(void)
+{
+	/*
+	 * First publish the shutdown state and wake the audio
+	 * thread waiting on the condition variable.
+	 */
 	pthread_mutex_lock(&g_run_mutex);
+
 	g_monitors_running = false;
+
 	pthread_cond_broadcast(&g_run_cond);
+
 	pthread_mutex_unlock(&g_run_mutex);
 
-	pthread_join(g_audio_thread, NULL);
-	pthread_join(g_network_thread, NULL);
-	pthread_join(g_display_thread, NULL);
+	/*
+	 * Wake network and display monitor threads.
+	 *
+	 * They may currently be blocked in poll(..., -1),
+	 * so simply changing g_monitors_running is not enough.
+	 */
+	if (g_network_wake[1] >= 0)
+		write(g_network_wake[1], "x", 1);
+
+	if (g_display_wake[1] >= 0)
+		write(g_display_wake[1], "x", 1);
+
+	/*
+	 * Wait for only the threads that were successfully created.
+	 */
+	if (g_audio_started) {
+		join_bounded(g_audio_thread, "audio");
+		g_audio_started = false;
+	}
+
+	if (g_network_started) {
+		join_bounded(g_network_thread, "network");
+		g_network_started = false;
+	}
+
+	if (g_display_started) {
+		join_bounded(g_display_thread, "display");
+		g_display_started = false;
+	}
+
+	/*
+	 * The netlink and udev monitors have exited (or been detached above), so
+	 * it is safe to close their wakeup pipes.
+	 */
+	if (g_network_wake[0] >= 0) {
+		close(g_network_wake[0]);
+		close(g_network_wake[1]);
+
+		g_network_wake[0] = -1;
+		g_network_wake[1] = -1;
+	}
+
+	if (g_display_wake[0] >= 0) {
+		close(g_display_wake[0]);
+		close(g_display_wake[1]);
+
+		g_display_wake[0] = -1;
+		g_display_wake[1] = -1;
+	}
 }
 
 /* ================================================================
- * TIMER DATA (called from main loop on 1s tick)
+ * TIMER DATA
  * ================================================================ */
 
-bool data_update_all_timer(State *state) {
+bool data_update_all_timer(State *state)
+{
 	return data_update_clock(state);
 }
 
-bool data_update_slow_timer(State *state) {
+bool data_update_slow_timer(State *state)
+{
 	bool changed = false;
+
 	changed |= data_update_cpu(state);
 	changed |= data_update_temp(state);
 	changed |= data_update_memory(state);
 	changed |= data_update_battery_hardware(state);
 	changed |= data_update_locks_hardware(state);
+
 	return changed;
 }
 
 /* ================================================================
- * SYNC (called from main thread after pipe notify)
+ * SYNC
  * ================================================================ */
 
-bool data_sync_audio(State *state) {
+bool data_sync_audio(State *state)
+{
 	pthread_mutex_lock(&g_data_mutex);
+
 	int old_vol = state->vol_pct;
 	bool old_muted = state->muted;
+
 	state->vol_pct = g_vol_pct;
 	state->muted = g_muted;
+
 	pthread_mutex_unlock(&g_data_mutex);
-	return old_vol != state->vol_pct || old_muted != state->muted;
+
+	return old_vol != state->vol_pct ||
+	       old_muted != state->muted;
 }
 
-bool data_sync_display(State *state) {
+bool data_sync_display(State *state)
+{
 	bool changed = false;
+
 	changed |= data_update_battery_hardware(state);
 	changed |= data_update_hdmi_hardware(state);
 	changed |= data_update_locks_hardware(state);
+
 	return changed;
 }
 
-bool data_sync_network(State *state) {
+bool data_sync_network(State *state)
+{
+	/*
+	 * Network: re-read from /proc/net/dev and cache iface name.
+	 *
+	 * Network info is maintained by the netlink monitor.
+	 * We read the interface state here to update the display.
+	 */
 
-	/* Network: re-read from /proc/net/dev and cache iface name */
-	/* Network info is maintained by the netlink monitor. We read
-	 * the interface state here to update the display. */
 	char active_iface[256] = {0};
 	bool is_wifi = false;
+
 	DIR *d = opendir("/sys/class/net");
+
 	if (d) {
 		struct dirent *ent;
+
 		while ((ent = readdir(d)) != NULL) {
-			if (ent->d_name[0] == '.') continue;
-			if (strcmp(ent->d_name, "lo") == 0) continue;
-			if (strncmp(ent->d_name, "veth", 4) == 0) continue;
-			if (strncmp(ent->d_name, "docker", 6) == 0) continue;
-			if (strncmp(ent->d_name, "br-", 3) == 0) continue;
+			if (ent->d_name[0] == '.')
+				continue;
+
+			if (strcmp(ent->d_name, "lo") == 0)
+				continue;
+
+			if (strncmp(ent->d_name, "veth", 4) == 0)
+				continue;
+
+			if (strncmp(ent->d_name, "docker", 6) == 0)
+				continue;
+
+			if (strncmp(ent->d_name, "br-", 3) == 0)
+				continue;
 
 			char path[512];
-			snprintf(path, sizeof(path), "/sys/class/net/%s/operstate", ent->d_name);
+
+			snprintf(path, sizeof(path),
+				 "/sys/class/net/%s/operstate",
+				 ent->d_name);
+
 			FILE *f = fopen(path, "r");
-			if (!f) continue;
+
+			if (!f)
+				continue;
+
 			char st[16] = {0};
-			if (fgets(st, sizeof(st), f) && strncmp(st, "up", 2) == 0) {
-				snprintf(active_iface, sizeof(active_iface), "%s", ent->d_name);
-				is_wifi = (ent->d_name[0] == 'w');
+
+			if (fgets(st, sizeof(st), f) &&
+			    strncmp(st, "up", 2) == 0) {
+
+				snprintf(active_iface,
+					 sizeof(active_iface),
+					 "%s",
+					 ent->d_name);
+
+				is_wifi =
+					(ent->d_name[0] == 'w');
+
 				fclose(f);
+
 				break;
 			}
+
 			fclose(f);
 		}
+
 		closedir(d);
 	}
 
-	bool online = (active_iface[0] != 0);
+	bool online =
+		(active_iface[0] != 0);
+
 	pthread_mutex_lock(&g_data_mutex);
+
 	if (!online) {
-		if (strcmp(state->net_name, "󰖪 Offline") != 0) {
-			snprintf(state->net_name, sizeof(state->net_name), "󰖪 Offline");
-			snprintf(state->net_speed, sizeof(state->net_speed), "%s", state->net_name);
+		if (strcmp(state->net_name,
+			   "󰖪 Offline") != 0) {
+
+			snprintf(state->net_name,
+				 sizeof(state->net_name),
+				 "󰖪 Offline");
+
+			snprintf(state->net_speed,
+				 sizeof(state->net_speed),
+				 "%s",
+				 state->net_name);
 		}
 	} else {
-		/* Get WiFi name - try nmcli first, then iwd/iwctl */
+		/*
+		 * Get WiFi name - try nmcli first,
+		 * then iwd/iwctl.
+		 */
 		static char cached_iface[256] = {0};
 		static char cached_name[256] = {0};
-		if (strcmp(cached_iface, active_iface) != 0) {
-			snprintf(cached_iface, sizeof(cached_iface), "%s", active_iface);
+
+		if (strcmp(cached_iface,
+			   active_iface) != 0) {
+
+			snprintf(cached_iface,
+				 sizeof(cached_iface),
+				 "%s",
+				 active_iface);
+
 			cached_name[0] = 0;
+
 			if (is_wifi) {
-				/* Try nmcli first (NetworkManager) */
+				/* Try nmcli first */
 				char cmd[256];
-				snprintf(cmd, sizeof(cmd), "nmcli -t -f GENERAL.CONNECTION device show %s 2>/dev/null", active_iface);
+
+				snprintf(
+					cmd,
+					sizeof(cmd),
+					"nmcli -t -f GENERAL.CONNECTION device show %s 2>/dev/null",
+					active_iface);
+
 				FILE *nm = popen(cmd, "r");
+
 				if (nm) {
 					char line[256];
-					while (fgets(line, sizeof(line), nm)) {
-						if (strncmp(line, "GENERAL.CONNECTION:", 19) == 0) {
-							char *val = line + 19;
-							char *nl = strchr(val, '\n');
-							if (nl) *nl = '\0';
-							if (val[0] && strcmp(val, "--") != 0) {
-								val[55] = '\0';
-								snprintf(cached_name, sizeof(cached_name), "%s", val);
+
+					while (fgets(line,
+						    sizeof(line),
+						    nm)) {
+
+						if (strncmp(
+							line,
+							"GENERAL.CONNECTION:",
+							19) == 0) {
+
+							char *val =
+								line + 19;
+
+							char *nl =
+								strchr(
+									val,
+									'\n');
+
+							if (nl)
+								*nl = '\0';
+
+							if (val[0] &&
+							    strcmp(
+								val,
+								"--") != 0) {
+
+								val[55] =
+									'\0';
+
+								snprintf(
+									cached_name,
+									sizeof(cached_name),
+									"%s",
+									val);
 							}
+
 							break;
 						}
 					}
+
 					pclose(nm);
 				}
-				
-				/* Fallback to iwd/iwctl if nmcli didn't work */
+
+				/*
+				 * Fallback to iwd/iwctl.
+				 */
 				if (!cached_name[0]) {
-					FILE *iw = popen("iwctl station list 2>/dev/null", "r");
+					FILE *iw =
+						popen(
+							"iwctl station list 2>/dev/null",
+							"r");
+
 					if (iw) {
 						char line[256];
-						while (fgets(line, sizeof(line), iw)) {
-							if (strstr(line, active_iface) && strstr(line, "connected")) {
-								/* Try to get the connected network name */
-								FILE *iw2 = popen("iwctl station get-networks 2>/dev/null | awk -F'  +' '$2 == \"connected\" {print $1}'", "r");
+
+						while (fgets(
+							line,
+							sizeof(line),
+							iw)) {
+
+							if (strstr(
+								line,
+								active_iface) &&
+							    strstr(
+								line,
+								"connected")) {
+
+								FILE *iw2 =
+									popen(
+										"iwctl station get-networks 2>/dev/null | awk -F'  +' '$2 == \"connected\" {print $1}'",
+										"r");
+
 								if (iw2) {
-									if (fgets(cached_name, sizeof(cached_name), iw2)) {
-										char *nl = strchr(cached_name, '\n');
-										if (nl) *nl = '\0';
+									if (fgets(
+										cached_name,
+										sizeof(cached_name),
+										iw2)) {
+
+										char *nl =
+											strchr(
+												cached_name,
+												'\n');
+
+										if (nl)
+											*nl = '\0';
 									}
+
 									pclose(iw2);
 								}
+
 								break;
 							}
 						}
+
 						pclose(iw);
 					}
 				}
-				
-				/* Fallback to iwctl station show */
+
+				/*
+				 * Fallback to iwctl station show.
+				 */
 				if (!cached_name[0]) {
 					char cmd2[256];
-					snprintf(cmd2, sizeof(cmd2), "iwctl station %s show 2>/dev/null | grep 'Connected network' | sed 's/.*Connected network *//'", active_iface);
-					FILE *iw3 = popen(cmd2, "r");
+
+					snprintf(
+						cmd2,
+						sizeof(cmd2),
+						"iwctl station %s show 2>/dev/null | grep 'Connected network' | sed 's/.*Connected network *//'",
+						active_iface);
+
+					FILE *iw3 =
+						popen(cmd2, "r");
+
 					if (iw3) {
-						if (fgets(cached_name, sizeof(cached_name), iw3)) {
-							char *nl = strchr(cached_name, '\n');
-							if (nl) *nl = '\0';
+						if (fgets(
+							cached_name,
+							sizeof(cached_name),
+							iw3)) {
+
+							char *nl =
+								strchr(
+									cached_name,
+									'\n');
+
+							if (nl)
+								*nl = '\0';
 						}
+
 						pclose(iw3);
 					}
 				}
 			}
+
+			trim_ws(cached_name);
+
 			if (!cached_name[0])
-				snprintf(cached_name, sizeof(cached_name), "%s", is_wifi ? "WiFi" : "Ethernet");
+				snprintf(
+					cached_name,
+					sizeof(cached_name),
+					"%s",
+					is_wifi
+						? "WiFi"
+						: "Ethernet");
 		}
 
-		const char *net_icon = is_wifi ? "󰖩" : "󰈀";
-		snprintf(state->net_name, sizeof(state->net_name), "%s %s", net_icon, cached_name);
+		const char *net_icon =
+			is_wifi
+				? "󰖩"
+				: "󰈀";
 
-		/* Read traffic stats from /proc/net/dev */
-		uint64_t rx = 0, tx = 0;
-		static uint64_t prev_rx = 0, prev_tx = 0;
+		snprintf(
+			state->net_name,
+			sizeof(state->net_name),
+			"%s %s",
+			net_icon,
+			cached_name);
+
+		trim_ws(state->net_name);
+
+		/*
+		 * Read traffic stats from /proc/net/dev.
+		 */
+		uint64_t rx = 0;
+		uint64_t tx = 0;
+
+		static uint64_t prev_rx = 0;
+		static uint64_t prev_tx = 0;
+
 		FILE *f = fopen("/proc/net/dev", "r");
+
 		if (f) {
 			char line[256];
-			while (fgets(line, sizeof(line), f)) {
-				if (strstr(line, active_iface)) {
+
+			while (fgets(
+				line,
+				sizeof(line),
+				f)) {
+
+				if (strstr(
+					line,
+					active_iface)) {
+
 					char iface[32];
-					unsigned long long r, t;
-					if (sscanf(line, "%31[^:]: %llu %*u %*u %*u %*u %*u %*u %*u %llu",
-						iface, &r, &t) >= 3) {
+					unsigned long long r;
+					unsigned long long t;
+
+					if (sscanf(
+						line,
+						"%31[^:]: %llu %*u %*u %*u %*u %*u %*u %*u %llu",
+						iface,
+						&r,
+						&t) >= 3) {
+
 						rx = r;
 						tx = t;
 					}
+
 					break;
 				}
 			}
+
 			fclose(f);
 		}
 
-		uint64_t drx = rx - prev_rx;
-		uint64_t dtx = tx - prev_tx;
+		uint64_t drx =
+			rx - prev_rx;
+
+		uint64_t dtx =
+			tx - prev_tx;
+
 		prev_rx = rx;
 		prev_tx = tx;
 
-		char rx_str[16], tx_str[16];
-		double kb_r = drx / 1024.0;
-		if (kb_r < 1000.0) snprintf(rx_str, sizeof(rx_str), "%.0fK", kb_r);
-		else snprintf(rx_str, sizeof(rx_str), "%.1fM", kb_r / 1024.0);
-		double kb_t = dtx / 1024.0;
-		if (kb_t < 1000.0) snprintf(tx_str, sizeof(tx_str), "%.0fK", kb_t);
-		else snprintf(tx_str, sizeof(tx_str), "%.1fM", kb_t / 1024.0);
+		char rx_str[16];
+		char tx_str[16];
 
-		snprintf(state->net_speed, sizeof(state->net_speed), "%s \u2193%s \u2191%s", net_icon, rx_str, tx_str);
+		double kb_r =
+			drx / 1024.0;
+
+		if (kb_r < 1000.0)
+			snprintf(
+				rx_str,
+				sizeof(rx_str),
+				"%.0fK",
+				kb_r);
+		else
+			snprintf(
+				rx_str,
+				sizeof(rx_str),
+				"%.1fM",
+				kb_r / 1024.0);
+
+		double kb_t =
+			dtx / 1024.0;
+
+		if (kb_t < 1000.0)
+			snprintf(
+				tx_str,
+				sizeof(tx_str),
+				"%.0fK",
+				kb_t);
+		else
+			snprintf(
+				tx_str,
+				sizeof(tx_str),
+				"%.1fM",
+				kb_t / 1024.0);
+
+		snprintf(
+			state->net_speed,
+			sizeof(state->net_speed),
+			"%s ↓%s ↑%s",
+			net_icon,
+			rx_str,
+			tx_str);
 	}
+
 	pthread_mutex_unlock(&g_data_mutex);
-	/* simple: consider network changed if we got here (conservative) */
+
+	/*
+	 * Simple: consider network changed if we got here.
+	 */
 	return true;
 }
 
-void data_sync_to_state(State *state) {
+void data_sync_to_state(State *state)
+{
 	/* legacy wrapper — triggers all, used only for init */
 	bool c = false;
+
 	c |= data_sync_audio(state);
 	c |= data_sync_display(state);
 	c |= data_sync_network(state);
+
 	(void)c;
 }

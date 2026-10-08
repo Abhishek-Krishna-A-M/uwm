@@ -17,6 +17,57 @@
 
 static State state = {0};
 
+/* ====== Termination signals ======
+ *
+ * ubar used to do signal(SIGINT, SIG_IGN) + signal(SIGTERM, SIG_IGN) right
+ * before the event loop. That made the bar completely unkillable by the
+ * session teardown: systemd stops session-N.scope with KillMode=control-group,
+ * KillSignal=15, SendSIGHUP=yes and TimeoutStopSec=90s, so a SIGTERM/SIGHUP
+ * that is ignored leaves the cgroup populated. The cgroup never empties, the
+ * scope stop job cannot complete, and every poweroff/reboot blocks on
+ * "A stop job is running for Session N of User X" until the 90s SIGKILL
+ * fallback fires. Leftover bars then stay in the scope forever (PPid 1), so
+ * the stall repeats on every subsequent shutdown.
+ *
+ * Two things were needed, not one:
+ *   1. The disposition must not be SIG_IGN.
+ *   2. The *mask* must not block the signal. uwm registers SIGINT/SIGTERM with
+ *      wl_event_loop_add_signal(), and libwayland blocks them process-wide to
+ *      read them from a signalfd. A blocked signal is inherited across fork()
+ *      and survives exec(), so ubar is born unable to receive SIGTERM. Without
+ *      unblocking, poll() never even sees EINTR and a handler is useless.
+ *
+ * The handlers only set a flag (async-signal-safe); the poll loop below turns
+ * it into a clean exit. They are installed without SA_RESTART on purpose so
+ * poll() returns EINTR instead of restarting itself. */
+static volatile sig_atomic_t term_received;
+
+static void term_handler(int sig) {
+	term_received = sig;
+}
+
+static void install_signal_handlers(void) {
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = term_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0; /* no SA_RESTART: poll() must return EINTR */
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL); /* inherited as SIG_IGN from uwm */
+
+	/* Drop the inherited block on the signals we now want to handle. */
+	sigset_t unblock;
+	sigemptyset(&unblock);
+	sigaddset(&unblock, SIGTERM);
+	sigaddset(&unblock, SIGINT);
+	sigaddset(&unblock, SIGHUP);
+	sigprocmask(SIG_UNBLOCK, &unblock, NULL);
+
+	/* ubar never waits for children, so let the kernel reap them. */
+	signal(SIGCHLD, SIG_IGN);
+}
+
 void cairo_set_source_hex(cairo_t *cr, uint32_t color) {
 	double a = ((color >> 24) & 0xFF) / 255.0;
 	double r = ((color >> 16) & 0xFF) / 255.0;
@@ -211,6 +262,10 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	/* Handle termination signals before touching the compositor so a
+	 * SIGTERM during startup still exits cleanly. */
+	install_signal_handlers();
+
 	/* Connect to Wayland */
 	state.display = wl_display_connect(NULL);
 	if (!state.display) return 1;
@@ -296,10 +351,6 @@ int main(int argc, char **argv) {
 	/* Start event-driven monitors */
 	data_start_monitors(&state);
 
-	signal(SIGINT, SIG_IGN);
-	signal(SIGTERM, SIG_IGN);
-	signal(SIGCHLD, SIG_IGN);
-
 	/* Main event loop */
 	int wl_fd = wl_display_get_fd(state.display);
 	struct pollfd fds[NFDS] = {
@@ -311,7 +362,7 @@ int main(int argc, char **argv) {
 		[FD_DISP]  = { .fd = state.display_pipe[0],   .events = POLLIN },
 	};
 
-	while (state.running) {
+	while (state.running && !term_received) {
 		if (state.need_redraw && state.configured && !state.frame_pending) {
 			render_frame(&state);
 			if (state.frame_pending) state.need_redraw = false;
@@ -333,6 +384,8 @@ int main(int argc, char **argv) {
 		int ret = poll(fds, NFDS, -1);
 		if (ret < 0) {
 			wl_display_cancel_read(state.display);
+			/* SIGTERM/SIGINT interrupt poll(); leave the loop and
+			 * run the real shutdown path instead of spinning. */
 			if (errno == EINTR) continue;
 			break;
 		}
@@ -430,7 +483,12 @@ int main(int argc, char **argv) {
 	wl_registry_destroy(registry);
 	wl_display_disconnect(state.display);
 
-	if (state.running) {
+	/* Re-exec only when the compositor connection broke on its own (so ubar
+	 * can re-attach after a compositor restart). A termination signal must
+	 * never re-exec: the replacement would be a brand new bar that the
+	 * session teardown has no chance to signal, which is exactly how stale
+	 * bars used to accumulate in the session scope. */
+	if (state.running && !term_received) {
 		execvp(argv[0], argv);
 		return 1;
 	}

@@ -15,6 +15,9 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/types/wlr_xdg_foreign_registry.h>
+#include <wlr/types/wlr_xdg_foreign_v1.h>
+#include <wlr/types/wlr_xdg_dialog_v1.h>
 #include <wlr/backend/session.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -68,6 +71,15 @@ struct uwm_server {
 
 	struct wlr_xdg_decoration_manager_v1 *xdg_decoration_manager;
 	struct wl_listener new_toplevel_decoration;
+
+	/* xdg-foreign / xdg-dialog: required by xdg-desktop-portal. Without
+	 * these the portal cannot export() its windows to a client, which is why
+	 * portal file choosers open but never return a selection. The registry is
+	 * owned by wlroots (freed with the display) but is kept here so the
+	 * globals can be created and inspected in one place. */
+	struct wlr_xdg_foreign_registry *xdg_foreign_registry;
+	struct wlr_xdg_foreign_v1 *xdg_foreign;
+	struct wlr_xdg_wm_dialog_v1 *xdg_dialog;
 
 	struct wlr_server_decoration_manager *server_decoration_manager;
 

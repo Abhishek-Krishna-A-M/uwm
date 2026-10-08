@@ -13,6 +13,7 @@
 #include <wayland-server-core.h>
 #include "server.h"
 #include "config.h"
+#include "child.h"
 #include "layer_shell.h"
 #include "idle_inhibit.h"
 
@@ -36,7 +37,8 @@ static int crash_restarts;
 static void crash_handler(int sig) {
 	if (g_crash_jmpbuf_valid) {
 		g_crash_jmpbuf_valid = 0;
-		write(STDERR_FILENO, "UWM: crash caught, recovering\n", 31);
+		ssize_t rc = write(STDERR_FILENO, "UWM: crash caught, recovering\n", 31);
+		(void)rc;
 		siglongjmp(g_crash_jmpbuf, sig);
 	}
 	signal(sig, SIG_DFL);
@@ -99,7 +101,7 @@ static int read_pid(const char *path)
 	FILE *f = fopen(path, "r");
 	if (!f) return -1;
 	int pid = -1;
-	fscanf(f, "%d", &pid);
+	if (fscanf(f, "%d", &pid) != 1) pid = -1;
 	fclose(f);
 	return pid;
 }
@@ -128,7 +130,17 @@ static void spawn_cmd(const char *cmd)
 	if (old_pid > 0)
 		unlink(pidfile);
 
-	if (fork() == 0) {
+	pid_t pid = fork();
+	if (pid < 0) {
+		wlr_log(WLR_ERROR, "fork() failed for '%s': %s", cmd, strerror(errno));
+		return;
+	}
+	if (pid == 0) {
+		/* Drop the compositor's signal mask and dispositions before exec:
+		 * SIGINT/SIGTERM are blocked process-wide by libwayland's signalfd
+		 * and that block survives exec, so an autostart entry would be born
+		 * unable to be terminated by systemd's session teardown. */
+		uwm_child_reset_signals();
 		setsid();
 		/* Write our PID before exec so future invocations can detect us */
 		FILE *pf = fopen(pidfile, "w");
@@ -140,6 +152,10 @@ static void spawn_cmd(const char *cmd)
 		execvp("sh", args);
 		_exit(1);
 	}
+
+	/* Remember it so server_finish() can guarantee nothing outlives the
+	 * session scope. */
+	uwm_child_register(pid);
 }
 
 static void clean_pid_dir(void)
@@ -278,10 +294,12 @@ int main(int argc, char *argv[]) {
 			break;
 		}
 
-		write(STDERR_FILENO, "UWM: recovered, rebuilding\n", 28);
+		ssize_t rc = write(STDERR_FILENO, "UWM: recovered, rebuilding\n", 28);
+		(void)rc;
 		uwm_rebuild_session_listeners(&server);
 		uwm_call_session_active(&server);
-		write(STDERR_FILENO, "UWM: restarting event loop\n", 28);
+		rc = write(STDERR_FILENO, "UWM: restarting event loop\n", 28);
+		(void)rc;
 	}
 
 	restore_crash_handlers(old_handlers);

@@ -226,6 +226,10 @@
             dbus
             xdg-desktop-portal
             xdg-desktop-portal-wlr
+            # Implements org.freedesktop.portal.FileChooser. The -wlr backend
+            # only covers Screenshot/ScreenCast, so without this every
+            # portal-backed GTK file dialog has no backend to talk to.
+            xdg-desktop-portal-gtk
           ];
 
           shellHook = ''
@@ -270,6 +274,26 @@
           ubar
           ulaunch
         ];
+        # On Wayland, GTK routes file dialogs through xdg-desktop-portal, so the
+        # session needs the daemon plus a FileChooser backend. -wlr only
+        # provides Screenshot/ScreenCast; -gtk provides FileChooser.
+        # `xdg.portal` (not the older services.xdg-desktop-portal) starts the
+        # daemon at its store path, which uwm's autostart cannot do because the
+        # package ships no `bin` output.
+        xdg.portal = {
+          enable = true;
+          extraPortals = with pkgs; [
+            xdg-desktop-portal-gtk
+            xdg-desktop-portal-wlr
+          ];
+          config = {
+            "preferred" = {
+              "org.freedesktop.impl.portal.FileChooser" = "gtk";
+              "org.freedesktop.impl.portal.Screenshot" = "wlr";
+              "org.freedesktop.impl.portal.ScreenCast" = "wlr";
+            };
+          };
+        };
       };
     };
 }

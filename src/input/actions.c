@@ -19,6 +19,7 @@
 #include "floating.h"
 #include "layout.h"
 #include "server.h"
+#include "child.h"
 #include "output.h"
 
 /* ========== Global server pointer for action functions ========== */
@@ -44,11 +45,22 @@ static void bsp_arrange_current_workspace(void)
 
 void spawn(const union arg *arg)
 {
-	if (fork() == 0) {
+	pid_t pid = fork();
+	if (pid < 0)
+		return;
+	if (pid == 0) {
+		/* Same reasoning as the autostart helper: libwayland blocks
+		 * SIGINT/SIGTERM process-wide for its signalfd, and that block is
+		 * inherited across fork() and survives exec(). Without clearing it
+		 * the application we start cannot be terminated by systemd when the
+		 * session scope is stopped. */
+		uwm_child_reset_signals();
 		setsid();
 		execvp((char *)arg->argv[0], (char **)arg->argv);
 		_exit(1);
 	}
+	/* Track it so it cannot outlive uwm and block the session scope. */
+	uwm_child_register(pid);
 }
 
 void quit(const union arg *arg)

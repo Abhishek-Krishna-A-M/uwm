@@ -17,6 +17,11 @@
 #define WS_GAP 10
 #define BLOCK_GAP 20
 #define UNDERLINE_SIZE 3
+/* Cap for the network item. It is the only variable-length label in the right
+ * block (SSID can be 32+ chars), and the block is laid out right-to-left from
+ * its measured width, so an unbounded item pushes every other item off the
+ * right edge. Measure and draw must use the same cap or the two disagree. */
+#define NET_MAX_WIDTH 200
 
 void destroy_buffer(struct pool_buffer *buf) {
 	if (!buf || !buf->buffer) return;
@@ -95,18 +100,33 @@ struct pool_buffer *get_next_buffer(State *state, uint32_t width, uint32_t heigh
 	return buf;
 }
 
-static void text_extents(PangoLayout *layout, const char *text, int *w, int *h) {
+static void apply_item_style(PangoLayout *layout, const char *text, bool cap) {
 	pango_layout_set_text(layout, text, -1);
 	pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+	if (cap) {
+		pango_layout_set_width(layout, NET_MAX_WIDTH * PANGO_SCALE);
+		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+	} else {
+		pango_layout_set_width(layout, -1);
+		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
+	}
+}
+
+static void text_extents_c(PangoLayout *layout, const char *text, int *w, int *h, bool cap) {
+	apply_item_style(layout, text, cap);
 	int tw, th;
 	pango_layout_get_pixel_size(layout, &tw, &th);
 	if (w) *w = tw;
 	if (h) *h = th;
 }
 
-static void draw_text(PangoLayout *layout, cairo_t *cr, double x, double bar_h, const char *text, uint32_t color) {
-	pango_layout_set_text(layout, text, -1);
-	pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+static void text_extents(PangoLayout *layout, const char *text, int *w, int *h) {
+	text_extents_c(layout, text, w, h, false);
+}
+
+static void draw_text(PangoLayout *layout, cairo_t *cr, double x, double bar_h,
+                      const char *text, uint32_t color, bool cap) {
+	apply_item_style(layout, text, cap);
 	int tw, th;
 	pango_layout_get_pixel_size(layout, &tw, &th);
 	cairo_set_source_hex(cr, color);
@@ -209,11 +229,6 @@ void render_frame(State *state) {
 		text_extents(layout, ws_str, &tw, NULL);
 		left_w += tw + 2 * WS_PAD + WS_GAP;
 	}
-	bool has_ws = left_w > 0;
-	if (has_ws) {
-		/* separator: original adds 4 + line + 10 =14 */
-		left_w += 14;
-	}
 
 	int center_w = 0;
 	if (state->time_str[0]) {
@@ -225,7 +240,8 @@ void render_frame(State *state) {
 	for (int i = 0; i < right_count; i++) {
 		if (!right_items[i].text[0]) continue;
 		int tw;
-		text_extents(layout, right_items[i].text, &tw, NULL);
+		text_extents_c(layout, right_items[i].text, &tw, NULL,
+		               right_items[i].type == ZONE_NETWORK);
 		if (visible_right > 0) right_w += ITEM_GAP;
 		right_w += tw;
 		visible_right++;
@@ -268,7 +284,7 @@ void render_frame(State *state) {
 		int padded_w = tw + 2 * WS_PAD;
 
 		uint32_t tc = active ? state->ws_focused_text : state->ws_inactive_text;
-		draw_text(layout, cr, lx + WS_PAD, h, ws_str, tc);
+		draw_text(layout, cr, lx + WS_PAD, h, ws_str, tc, false);
 
 		/* underline for focused workspace – polybar line-size 3 line-color primary
 		 * spans padded width so it has breathing room like label padding=2 */
@@ -289,16 +305,6 @@ void render_frame(State *state) {
 		lx += padded_w + WS_GAP;
 	}
 
-	if (has_ws) {
-		lx += 4;
-		cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.15);
-		cairo_set_line_width(cr, 1);
-		cairo_move_to(cr, lx, 6);
-		cairo_line_to(cr, lx, h - 6);
-		cairo_stroke(cr);
-		lx += 10;
-	}
-
 	/* ---- Draw center time (fixed-center) ---- */
 	if (center_w > 0) {
 		if (zone_idx < MAX_ZONES) {
@@ -308,15 +314,16 @@ void render_frame(State *state) {
 			state->zones[zone_idx].data = 0;
 			zone_idx++;
 		}
-		draw_text(layout, cr, cx, h, state->time_str, state->fg_color);
+		draw_text(layout, cr, cx, h, state->time_str, state->fg_color, false);
 	}
 
 	/* ---- Draw right block (right-to-left, preserves original visual order) ---- */
 	int rx = rx_edge;
 	for (int i = 0; i < right_count; i++) {
 		if (!right_items[i].text[0]) continue;
+		bool cap = (right_items[i].type == ZONE_NETWORK);
 		int tw;
-		text_extents(layout, right_items[i].text, &tw, NULL);
+		text_extents_c(layout, right_items[i].text, &tw, NULL, cap);
 		rx -= tw;
 
 		if (zone_idx < MAX_ZONES && right_items[i].type != ZONE_NONE) {
@@ -327,7 +334,7 @@ void render_frame(State *state) {
 			zone_idx++;
 		}
 
-		draw_text(layout, cr, rx, h, right_items[i].text, right_items[i].color);
+		draw_text(layout, cr, rx, h, right_items[i].text, right_items[i].color, cap);
 		rx -= ITEM_GAP;
 	}
 

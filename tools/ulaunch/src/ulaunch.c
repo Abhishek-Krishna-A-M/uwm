@@ -17,6 +17,43 @@
 
 State state = {0};
 
+/* ====== Termination signals ======
+ *
+ * Same trap ubar fell into: ignoring SIGTERM/SIGINT kept a launcher alive
+ * inside session-N.scope, and systemd cannot finish stopping that scope
+ * (KillMode=control-group, KillSignal=15, SendSIGHUP=yes, TimeoutStopSec=90s)
+ * while a process in it survives, so poweroff/reboot stalls on
+ * "A stop job is running for Session N of User X".
+ *
+ * uwm installs SIGINT/SIGTERM through wl_event_loop_add_signal(), which makes
+ * libwayland block them process-wide; that block is inherited across fork() and
+ * survives exec(). So the dispositions alone are not enough — the mask has to
+ * be cleared too, otherwise poll() never returns EINTR. Handlers only set a
+ * flag (async-signal-safe) and are installed without SA_RESTART on purpose. */
+static volatile sig_atomic_t term_received;
+
+static void term_handler(int sig) {
+	term_received = sig;
+}
+
+static void install_signal_handlers(void) {
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = term_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0; /* no SA_RESTART: poll() must return EINTR */
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL); /* inherited as SIG_IGN from uwm */
+
+	sigset_t unblock;
+	sigemptyset(&unblock);
+	sigaddset(&unblock, SIGTERM);
+	sigaddset(&unblock, SIGINT);
+	sigaddset(&unblock, SIGHUP);
+	sigprocmask(SIG_UNBLOCK, &unblock, NULL);
+}
+
 uint32_t parse_color(const char *hex) {
 	if (*hex == '#') hex++;
 	unsigned int r, g, b;
@@ -169,6 +206,7 @@ int main(int argc, char **argv) {
 	}
 
 	/* --- Wayland init --- */
+	install_signal_handlers();
 	state.display = wl_display_connect(NULL);
 	if (!state.display) goto err;
 
@@ -224,10 +262,7 @@ int main(int argc, char **argv) {
 	/* --- event loop --- */
 	int wl_fd = wl_display_get_fd(state.display);
 
-	signal(SIGINT, SIG_IGN);
-	signal(SIGTERM, SIG_IGN);
-
-	while (state.running) {
+	while (state.running && !term_received) {
 		/* Don't queue a new frame while one is still in flight: the
 		 * buffer pool is only 3 deep, and back-to-back full repaints of a
 		 * full-output-sized surface are pure waste. */

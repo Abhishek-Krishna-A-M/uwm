@@ -17,6 +17,8 @@
 #include "capture.h"
 #include "transient.h"
 #include "output_manager.h"
+#include "child.h"
+#include "session_env.h"
 #include "input.h"
 #include "output.h"
 #include "window.h"
@@ -33,7 +35,12 @@ static int handle_term_signal(int signo, void *data) {
 
 static void sigchld_handler(int signo) {
 	(void)signo;
-	while (waitpid(-1, NULL, WNOHANG) > 0) {
+	for (;;) {
+		int status;
+		pid_t pid = waitpid(-1, &status, WNOHANG);
+		if (pid <= 0)
+			break;
+		uwm_child_reaped(pid);
 	}
 }
 
@@ -111,6 +118,11 @@ static void handle_xwayland_ready(struct wl_listener *listener, void *data) {
 	if (server->xwayland && server->xwayland->display_name) {
 		setenv("DISPLAY", server->xwayland->display_name, true);
 		wlr_log(WLR_INFO, "XWayland DISPLAY set to %s, socket at /tmp/.X11-unix/X%s", server->xwayland->display_name, server->xwayland->display_name+1);
+		/* DISPLAY only becomes known here, so re-export the session
+		 * environment: X11 clients started via D-Bus activation or by a
+		 * systemd --user service need it just as much as they needed
+		 * WAYLAND_DISPLAY. */
+		uwm_session_export_env();
 	}
 }
 #endif
@@ -146,14 +158,18 @@ bool server_init(struct uwm_server *server) {
 	 * SIGHUP: logind may revoke the controlling terminal during VT switch,
 	 *         which sends SIGHUP to the foreground process group. Ignore it;
 	 *         wlroots handles session pause/resume via libseat/logind.
-	 * SIGTERM: logind sends SIGTERM when disabling a seat during VT switch.
-	 *          Ignore it — the event loop handles SIGINT for clean exit. */
+	 * SIGTERM: deliberately NOT ignored. systemd/logind stop a session scope
+	 *          with SIGTERM on poweroff/reboot; ignoring it leaves the scope
+	 *          populated and blocks shutdown until the stop job times out.
+	 *          VT switching does not need SIGTERM suppression — logind
+	 *          switches VTs by revoking the DRM master, which libseat/wlroots
+	 *          handle. SIGTERM is routed through the event loop below, exactly
+	 *          like SIGINT. */
 	struct sigaction sa_ign = { .sa_handler = SIG_IGN, .sa_flags = SA_RESTART };
 	struct sigaction sa_chld = { .sa_handler = sigchld_handler, .sa_flags = SA_RESTART | SA_NOCLDSTOP };
 	sigaction(SIGCHLD, &sa_chld, NULL);
 	sigaction(SIGPIPE, &sa_ign, NULL);
 	sigaction(SIGHUP, &sa_ign, NULL);
-	sigaction(SIGTERM, &sa_ign, NULL);
 	config_load(&server->config);
 
 	/* The Wayland display is managed by libwayland. It handles accepting
@@ -290,12 +306,14 @@ bool server_init(struct uwm_server *server) {
 			&server->transient_seat_create);
 	}
 
-	/* Handle SIGINT via the Wayland event loop so we can cleanly
-	 * shut down (destroy clients, release DRM master, etc.).
-	 * SIGTERM is ignored (see above) to prevent logind from killing
-	 * the compositor during VT switch — use Ctrl+C (SIGINT) to exit. */
+	/* Handle SIGINT and SIGTERM via the Wayland event loop so we can cleanly
+	 * shut down (destroy clients, release DRM master, etc.). SIGTERM is the
+	 * one that matters on systemd distros: logind stops the session scope with
+	 * SIGTERM on poweroff/reboot, so it must not be ignored or shutdown hangs
+	 * waiting for a scope that never drains. */
 	struct wl_event_loop *loop = wl_display_get_event_loop(server->wl_display);
 	wl_event_loop_add_signal(loop, SIGINT, handle_term_signal, server);
+	wl_event_loop_add_signal(loop, SIGTERM, handle_term_signal, server);
 
 	/* Creates an output layout, which a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
@@ -365,6 +383,24 @@ bool server_init(struct uwm_server *server) {
 		server->new_toplevel_decoration.notify = server_new_toplevel_decoration;
 		wl_signal_add(&server->xdg_decoration_manager->events.new_toplevel_decoration,
 			&server->new_toplevel_decoration);
+	}
+
+	/* xdg-foreign + xdg-dialog, needed by xdg-desktop-portal.
+	 *
+	 * The portal's FileChooser runs as a separate client and must export() its
+	 * window back to the requesting app so the app can treat it as modal. That
+	 * export is xdg_foreign_v1 / xdg_dialog_v1. Without these globals the
+	 * portal can still put a chooser on screen, but the app never gets a
+	 * handle for it and the selection is never delivered — the chooser opens
+	 * and then appears to do nothing when a file is picked.
+	 *
+	 * The registry maps exported handles to our xdg_toplevels; wlroots frees it
+	 * along with the display. */
+	server->xdg_foreign_registry = wlr_xdg_foreign_registry_create(server->wl_display);
+	if (server->xdg_foreign_registry) {
+		server->xdg_foreign = wlr_xdg_foreign_v1_create(
+			server->wl_display, server->xdg_foreign_registry);
+		server->xdg_dialog = wlr_xdg_wm_dialog_v1_create(server->wl_display, 1);
 	}
 
 	/* Set up KDE server-decoration protocol. Some clients (e.g. GTK3) use
@@ -579,6 +615,26 @@ bool server_init(struct uwm_server *server) {
 	}
 	setenv("WAYLAND_DISPLAY", server->socket, true);
 
+	/* Session environment.
+	 *
+	 * This is deliberately the first thing that happens after the socket
+	 * exists. Everything below — the XWayland setup, the autostart entries
+	 * that main.c spawns next, D-Bus activated applications and systemd
+	 * --user services — is downstream of it:
+	 *
+	 *   - XDG_SESSION_TYPE / XDG_CURRENT_DESKTOP / XDG_SESSION_DESKTOP let
+	 *     toolkits, portals and apps detect a Wayland session and pick the
+	 *     matching backend instead of guessing from WAYLAND_DISPLAY alone.
+	 *   - exporting to the D-Bus activation environment covers everything
+	 *     started by the bus (xdg-desktop-portal and its backends).
+	 *   - exporting to systemd --user covers user services, which inherit
+	 *     from the user manager rather than from uwm.
+	 *
+	 * WAYLAND_DISPLAY must not be published before the socket is created,
+	 * so this cannot move earlier. */
+	uwm_session_setup_env();
+	uwm_session_export_env();
+
 #if WLR_HAS_XWAYLAND
 	/* XWayland — eager mode if -x passed, else pure Wayland.
 	 * eager (lazy=false) starts X server immediately so it appears in htop
@@ -660,6 +716,14 @@ err:
 
 void server_finish(struct uwm_server *server) {
 	wlr_log(WLR_INFO, "SERVER_FINISH BEGIN");
+
+	/* Terminate everything uwm spawned *before* tearing the Wayland display
+	 * down. The session scope cannot be stopped while any process remains in
+	 * its cgroup, so an autostart entry that ignores SIGTERM would otherwise
+	 * stall poweroff/reboot for the full TimeoutStopSec. Doing it first also
+	 * stops clients from seeing the connection drop and re-execing
+	 * themselves into a fresh, unsignalable copy. */
+	uwm_children_terminate();
 
 	/* Once wl_display_run returns, we destroy all clients then shut down the server. */
 	wl_display_destroy_clients(server->wl_display);
