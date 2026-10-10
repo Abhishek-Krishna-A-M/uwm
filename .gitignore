@@ -126,3 +126,11 @@ docs/sway/
 # python bytecode cache from tests/
 __pycache__/
 *.pyc
+
+# makepkg staging (PKGBUILD lives in the repo root, which collides with
+# makepkg's default srcdir/pkgdir — always build in a clean copy or with
+# BUILDDIR pointed elsewhere, see PKGBUILD note)
+/pkg/
+/src/uwm/
+*.pkg.tar.zst
+*.src.tar.gz
