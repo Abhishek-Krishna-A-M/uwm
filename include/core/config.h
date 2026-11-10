@@ -120,6 +120,7 @@ void togglemonocle(const union arg *arg);
 void setbsp(const union arg *arg);
 void cyclefocus(const union arg *arg);
 void rotatesplit(const union arg *arg);
+void toggle_bar(const union arg *arg);
 
 void config_load(struct uwm_config *config);
 void config_finish(struct uwm_config *config);

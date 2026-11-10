@@ -131,6 +131,7 @@ struct uwm_server {
 	struct uwm_workspace_manager workspaces;
 	struct wlr_session *session;
 	struct uwm_config config;
+	bool bar_visible;           /* ubar layer surface currently visible */
 	struct wl_listener renderer_lost;
 	struct wl_listener session_active;
 	bool locked;                              /* session lock active */
