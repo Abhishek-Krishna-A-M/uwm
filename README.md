@@ -209,6 +209,7 @@ All keybindings use **Super (Logo)** as the primary modifier.
 | `Super+Shift+f` | File manager (lf) |
 | `Super+Alt+f` | Find file |
 | `Super+Alt+x` | Power menu |
+| `Super+b` | Toggle ubar visibility (hide/show). Tiling reflows to the full screen area when hidden, respecting `OUTER_GAP`. |
 
 ### Screenshots
 

@@ -12,7 +12,7 @@
 #define FLOATING_CREATE_MIN_WIDTH 200
 #define FLOATING_CREATE_MIN_HEIGHT 150
 #define INNER_GAP 5
-#define OUTER_GAP 5
+#define OUTER_GAP 1
 
 /* When a monocle workspace has more tiled windows than this, fall back to
  * lazy sizing (only the focused window is sized per focus change) instead of
@@ -26,7 +26,7 @@
 #define TAP_TO_CLICK true
 #define NATURAL_SCROLL true
 #define ACCEL_PROFILE 1
-#define POINTER_SPEED 0.2
+#define POINTER_SPEED 0.6
 
 /* XKB options — set to "caps:escape" to map Caps Lock to Escape */
 #define XKB_OPTIONS "caps:escape"
@@ -67,7 +67,7 @@
 #define VOLMUTE     "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", NULL
 #define BRUP        "sh", "-c", "brightnessctl set +10%", NULL
 #define BRDOWN      "sh", "-c", "brightnessctl set 10%-", NULL
-#define REFRESH_BAR "sh", "-c", "pkill -x ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
+#define REFRESH_BAR "sh", "-c", "pkill -9 ubar 2>/dev/null; sleep 0.3; setsid ubar >/dev/null 2>&1 &", NULL
 #define UBROWSER    "ubrowser", NULL
 #define RUN_ACTIONS "sh", "-c", "~/.config/custom_scripts/run_actions.sh", NULL
 
@@ -165,6 +165,7 @@
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_r, spawn, { .argv = refresh_bar }) \
 	KEY(MOD | WLR_MODIFIER_SHIFT, XKB_KEY_b, spawn, { .argv = ubrowser }) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_b, spawn, { .argv = run_actions }) \
+	KEY(MOD, XKB_KEY_b, toggle_bar, {0}) \
 	KEY(MOD | WLR_MODIFIER_ALT, XKB_KEY_q, quit, {0})
 
 /* unmodified key bindings (no modifier required) */
@@ -180,12 +181,20 @@
  * Each entry is executed via sh -c after WAYLAND_DISPLAY is set.
  * PipeWire is started here because runit has no user service manager.
  * Portals are started here for the same reason. */
+/* The portal daemon ships with no `bin` output — the executable lives in
+ * `libexec/`, so it is never on PATH on either NixOS or the FHS distros. That
+ * is why absolute paths are tried here. NixOS additionally relocates it into
+ * the store (/run/current-system/sw/libexec), and its NixOS module starts it
+ * via systemd instead, so the store case is covered there and this chain is a
+ * harmless no-op. `-r` takes over an instance another autostart may have
+ * started; `|| true` keeps a machine without a portal from breaking autostart.
+ * A FileChooser backend (xdg-desktop-portal-gtk) must also be installed — the
+ * -wlr backend only provides Screenshot/ScreenCast. */
 #define AUTOSTART \
 	"foot --server", \
 	"ubar", \
-	"swaybg -i ~/Pictures/artix-wallpaper.png -m fill", \
-	"/usr/lib/xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || true", \
-	"runsvdir ~/.local/share/runit/service", \
+	"swaybg -i ~/Pictures/arch-wallpaper.png -m fill", \
+	"xdg-desktop-portal -r 2>/dev/null || /usr/libexec/xdg-desktop-portal -r 2>/dev/null || /usr/lib/xdg-desktop-portal -r 2>/dev/null || true", \
 	NULL
 
 /* compile-time rules */

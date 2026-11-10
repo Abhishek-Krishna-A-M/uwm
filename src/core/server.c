@@ -172,6 +172,8 @@ bool server_init(struct uwm_server *server) {
 	sigaction(SIGHUP, &sa_ign, NULL);
 	config_load(&server->config);
 
+	server->bar_visible = true;
+
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, managing Wayland globals, and so on. */
 	server->wl_display = wl_display_create();

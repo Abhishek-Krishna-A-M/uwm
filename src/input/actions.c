@@ -311,3 +311,25 @@ void rotatesplit(const union arg *arg)
 	bsp_rotate_focused_split(current_ws());
 	bsp_arrange_current_workspace();
 }
+
+void toggle_bar(const union arg *arg)
+{
+	(void)arg;
+	struct uwm_server *server = uwm_server;
+	if (!server)
+		return;
+
+	server->bar_visible = !server->bar_visible;
+
+	if (server->bar_visible) {
+		/* Bring the bar back. Reuse a dedicated argv so ubar starts fresh. */
+		const char *argv[] = { "ubar", NULL };
+		spawn(&(union arg){ .argv = argv });
+	} else {
+		/* Hide the bar. Killing ubar unmaps its layer surface, so UWM
+		 * immediately frees its exclusive zone and tiles windows into the
+		 * full screen area (still honoring OUTER_GAP). */
+		const char *argv[] = { "pkill", "-9", "ubar", NULL };
+		spawn(&(union arg){ .argv = argv });
+	}
+}
